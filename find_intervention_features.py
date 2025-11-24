@@ -49,17 +49,23 @@ class InterventionFeatureFinder:
         """
         self.input_file = input_file
         self.token_position = token_position
+        
+        # タイムスタンプ付きの実験ディレクトリ
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_name = f"{token_position}_{timestamp}"
+        
+        # ハイブリッド構造のディレクトリ設定
         self.output_dir = Path(output_dir)
-        self.plots_dir = self.output_dir / "plots"
-        self.shap_dir = self.output_dir / "shap_values"
+        self.experiment_dir = self.output_dir / "experiments" / experiment_name
+        self.data_dir = self.experiment_dir / "data"
+        self.figures_dir = self.experiment_dir / "figures"
         
         # 出力ディレクトリの作成
-        self.plots_dir.mkdir(parents=True, exist_ok=True)
-        self.shap_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
         
-        # タイムスタンプ付きのファイル名プレフィックス
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.file_prefix = f"{token_position}_{timestamp}"
+        self.file_prefix = experiment_name
+        self.timestamp = timestamp
         
         # データ格納用
         self.data = None
@@ -255,7 +261,7 @@ class InterventionFeatureFinder:
         print(f"Avg Prec:  {np.mean(cv_avg_prec):.4f} ± {np.std(cv_avg_prec):.4f}\n")
         
         # SHAP値を保存
-        shap_save_path = self.shap_dir / f"{self.file_prefix}_shap_values.npz"
+        shap_save_path = self.data_dir / "shap_values.npz"
         np.savez(
             shap_save_path,
             shap_values=self.shap_values_sorted,
@@ -316,7 +322,7 @@ class InterventionFeatureFinder:
         ax2.grid(alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(self.plots_dir / f"{self.file_prefix}_roc_pr_curves.png", dpi=300, bbox_inches='tight')
+        plt.savefig(self.figures_dir / "01_model_performance.png", dpi=300, bbox_inches='tight')
         plt.close()
         
         # 最適閾値の探索
@@ -445,14 +451,14 @@ class InterventionFeatureFinder:
         ax.grid(alpha=0.3)
         plt.tight_layout()
         plt.savefig(
-            self.plots_dir / f"{self.file_prefix}_consistency_analysis.png",
+            self.figures_dir / "04_consistency_analysis.png",
             dpi=300, bbox_inches='tight'
         )
         plt.close()
         
         # CSVとして保存
         stats_df.to_csv(
-            self.output_dir / f"{self.file_prefix}_feature_consistency_stats.csv",
+            self.data_dir / "feature_consistency_stats.csv",
             index=False
         )
         
@@ -506,14 +512,14 @@ class InterventionFeatureFinder:
         )
         plt.tight_layout()
         plt.savefig(
-            self.plots_dir / f"{self.file_prefix}_template_heatmap.png",
+            self.figures_dir / "05_template_heatmap.png",
             dpi=300, bbox_inches='tight'
         )
         plt.close()
         
         # CSVとして保存
         heatmap_df.to_csv(
-            self.output_dir / f"{self.file_prefix}_template_analysis.csv"
+            self.data_dir / "template_analysis.csv"
         )
         
         print(f"テンプレート別ヒートマップを保存しました\n")
@@ -669,7 +675,7 @@ class InterventionFeatureFinder:
         shap.plots.beeswarm(explanation, max_display=20, show=False)
         plt.tight_layout()
         plt.savefig(
-            self.plots_dir / f"{self.file_prefix}_shap_beeswarm.png",
+            self.figures_dir / "02_shap_beeswarm.png",
             dpi=300, bbox_inches='tight'
         )
         plt.close()
@@ -679,7 +685,7 @@ class InterventionFeatureFinder:
         shap.plots.bar(explanation, max_display=20, show=False)
         plt.tight_layout()
         plt.savefig(
-            self.plots_dir / f"{self.file_prefix}_shap_bar.png",
+            self.figures_dir / "03_shap_bar.png",
             dpi=300, bbox_inches='tight'
         )
         plt.close()
@@ -690,8 +696,27 @@ class InterventionFeatureFinder:
         """分析結果を保存"""
         print("=== 結果の保存 ===")
         
+        # 実験設定を保存 (config.json)
+        config_file = self.experiment_dir / "config.json"
+        with open(config_file, 'w') as f:
+            json.dump({
+                'experiment_name': self.file_prefix,
+                'timestamp': self.timestamp,
+                'input_file': str(self.input_file),
+                'token_position': self.token_position,
+                'data_shape': {
+                    'n_samples': int(self.X.shape[0]),
+                    'n_features': int(self.X.shape[1]),
+                    'n_class_0': int((self.y == 0).sum()),
+                    'n_class_1': int((self.y == 1).sum())
+                },
+                'model_config': self.lgb_params,
+                'execution_time': datetime.now().isoformat()
+            }, f, indent=2)
+        print(f"実験設定を保存: {config_file}")
+        
         # クロスバリデーション結果を保存
-        cv_results_file = self.output_dir / f"{self.file_prefix}_cv_results.json"
+        cv_results_file = self.data_dir / "cv_results.json"
         cv_summary = {
             'n_splits': len(self.cv_metrics),
             'fold_results': self.cv_metrics,
@@ -715,7 +740,7 @@ class InterventionFeatureFinder:
         print(f"クロスバリデーション結果を保存: {cv_results_file}")
         
         # SHAP値の統計サマリーを計算・保存
-        shap_stats_file = self.output_dir / f"{self.file_prefix}_shap_statistics.csv"
+        shap_stats_file = self.data_dir / "shap_statistics.csv"
         shap_stats = []
         for i, feature_name in enumerate(self.X.columns):
             feature_shap = self.shap_values_sorted[:, i]
@@ -737,13 +762,13 @@ class InterventionFeatureFinder:
         
         # Top-k特徴のランキングを保存
         top_k = min(50, len(self.X.columns))
-        top_features_file = self.output_dir / f"{self.file_prefix}_top{top_k}_features.csv"
+        top_features_file = self.data_dir / f"top{top_k}_features.csv"
         top_features_df = shap_stats_df.head(top_k)
         top_features_df.to_csv(top_features_file, index=False)
         print(f"Top-{top_k}特徴を保存: {top_features_file}")
         
         # 介入特徴リストをJSON形式で保存
-        intervention_file = self.output_dir / f"{self.file_prefix}_intervention_features.json"
+        intervention_file = self.data_dir / "intervention_features.json"
         with open(intervention_file, 'w') as f:
             json.dump({
                 'token_position': self.token_position,
@@ -768,7 +793,7 @@ class InterventionFeatureFinder:
         print(f"介入特徴リストを保存: {intervention_file}")
         
         # 統計サマリーを保存
-        summary_file = self.output_dir / f"{self.file_prefix}_summary.txt"
+        summary_file = self.experiment_dir / "summary.txt"
         with open(summary_file, 'w') as f:
             f.write(f"=== SAE介入特徴分析サマリー ===\n\n")
             f.write(f"入力ファイル: {self.input_file}\n")
@@ -866,7 +891,9 @@ class InterventionFeatureFinder:
         
         print("=" * 60)
         print("分析完了！")
-        print(f"結果は {self.output_dir} に保存されました")
+        print(f"実験ディレクトリ: {self.experiment_dir}")
+        print(f"  - データ: {self.data_dir}")
+        print(f"  - 図: {self.figures_dir}")
         print("=" * 60)
 
 
