@@ -26,7 +26,8 @@ import lightgbm as lgb
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_curve, auc, precision_recall_curve, average_precision_score
+    roc_curve, auc, precision_recall_curve, average_precision_score,
+    confusion_matrix, classification_report
 )
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import pdist
@@ -70,6 +71,13 @@ class InterventionFeatureFinder:
         self.y_pred_proba_sorted = None
         self.optimal_threshold = None
         self.intervention_features = None
+        
+        # モデル性能指標の格納用
+        self.model_metrics = {}
+        self.cv_metrics = []
+        self.lgb_params = None
+        self.roc_auc = None
+        self.avg_precision = None
         
         print(f"=== 介入特徴探索プログラム ===")
         print(f"入力ファイル: {input_file}")
@@ -155,6 +163,11 @@ class InterventionFeatureFinder:
             'max_depth': -1
         }
         
+        # パラメータを保存
+        self.lgb_params = params.copy()
+        self.lgb_params['n_splits'] = n_splits
+        self.lgb_params['random_state'] = 42
+        
         # 予測確率とSHAP値を収集
         all_y_true = []
         all_y_pred_proba = []
@@ -184,6 +197,23 @@ class InterventionFeatureFinder:
             all_y_true.extend(y_val_fold)
             all_y_pred_proba.extend(y_pred_proba)
             
+            # 各Foldの性能を計算して保存
+            y_pred_fold = (y_pred_proba >= 0.5).astype(int)
+            fold_metrics = {
+                'fold': fold,
+                'accuracy': accuracy_score(y_val_fold, y_pred_fold),
+                'precision': precision_score(y_val_fold, y_pred_fold, zero_division=0),
+                'recall': recall_score(y_val_fold, y_pred_fold, zero_division=0),
+                'f1': f1_score(y_val_fold, y_pred_fold, zero_division=0),
+                'roc_auc': roc_curve(y_val_fold, y_pred_proba)[0:2],  # fpr, tpr
+                'best_iteration': model_fold.best_iteration
+            }
+            # ROC AUCを計算
+            fpr_fold, tpr_fold, _ = roc_curve(y_val_fold, y_pred_proba)
+            fold_metrics['roc_auc'] = auc(fpr_fold, tpr_fold)
+            fold_metrics['avg_precision'] = average_precision_score(y_val_fold, y_pred_proba)
+            self.cv_metrics.append(fold_metrics)
+            
             # SHAP値の計算
             explainer_fold = shap.TreeExplainer(model_fold)
             shap_explanation = explainer_fold(X_val_fold)
@@ -207,6 +237,22 @@ class InterventionFeatureFinder:
         self.y_pred_proba_sorted = np.array(all_y_pred_proba)[sorted_idx]
         
         print(f"SHAP値計算完了: {self.shap_values_sorted.shape}\n")
+        
+        # クロスバリデーション結果のサマリーを表示
+        print("=== クロスバリデーション結果 ===")
+        cv_acc = [m['accuracy'] for m in self.cv_metrics]
+        cv_prec = [m['precision'] for m in self.cv_metrics]
+        cv_rec = [m['recall'] for m in self.cv_metrics]
+        cv_f1 = [m['f1'] for m in self.cv_metrics]
+        cv_roc_auc = [m['roc_auc'] for m in self.cv_metrics]
+        cv_avg_prec = [m['avg_precision'] for m in self.cv_metrics]
+        
+        print(f"Accuracy:  {np.mean(cv_acc):.4f} ± {np.std(cv_acc):.4f}")
+        print(f"Precision: {np.mean(cv_prec):.4f} ± {np.std(cv_prec):.4f}")
+        print(f"Recall:    {np.mean(cv_rec):.4f} ± {np.std(cv_rec):.4f}")
+        print(f"F1 Score:  {np.mean(cv_f1):.4f} ± {np.std(cv_f1):.4f}")
+        print(f"ROC AUC:   {np.mean(cv_roc_auc):.4f} ± {np.std(cv_roc_auc):.4f}")
+        print(f"Avg Prec:  {np.mean(cv_avg_prec):.4f} ± {np.std(cv_avg_prec):.4f}\n")
         
         # SHAP値を保存
         shap_save_path = self.shap_dir / f"{self.file_prefix}_shap_values.npz"
@@ -233,6 +279,10 @@ class InterventionFeatureFinder:
             self.y_true_sorted, self.y_pred_proba_sorted
         )
         avg_precision = average_precision_score(self.y_true_sorted, self.y_pred_proba_sorted)
+        
+        # メトリクスを保存
+        self.roc_auc = roc_auc
+        self.avg_precision = avg_precision
         
         print(f"ROC AUC: {roc_auc:.4f}")
         print(f"Average Precision: {avg_precision:.4f}")
@@ -297,12 +347,32 @@ class InterventionFeatureFinder:
         prec_optimal = precision_score(self.y_true_sorted, y_pred_optimal, zero_division=0)
         rec_optimal = recall_score(self.y_true_sorted, y_pred_optimal, zero_division=0)
         
+        # 混同行列を計算
+        cm = confusion_matrix(self.y_true_sorted, y_pred_optimal)
+        
+        # モデルメトリクスを保存
+        self.model_metrics = {
+            'optimal_threshold': float(optimal_threshold_f1),
+            'accuracy': float(acc_optimal),
+            'precision': float(prec_optimal),
+            'recall': float(rec_optimal),
+            'f1_score': float(max_f1),
+            'confusion_matrix': cm.tolist(),
+            'true_negatives': int(cm[0, 0]),
+            'false_positives': int(cm[0, 1]),
+            'false_negatives': int(cm[1, 0]),
+            'true_positives': int(cm[1, 1])
+        }
+        
         print(f"F1スコア最大化:")
         print(f"  最適閾値: {optimal_threshold_f1:.2f}")
         print(f"  F1スコア: {max_f1:.4f}")
         print(f"  Accuracy: {acc_optimal:.4f}")
         print(f"  Precision: {prec_optimal:.4f}")
         print(f"  Recall: {rec_optimal:.4f}")
+        print(f"\n混同行列:")
+        print(f"  TN: {cm[0, 0]}, FP: {cm[0, 1]}")
+        print(f"  FN: {cm[1, 0]}, TP: {cm[1, 1]}")
         
         # Youden's Index
         youden_index = tpr - fpr
@@ -620,6 +690,58 @@ class InterventionFeatureFinder:
         """分析結果を保存"""
         print("=== 結果の保存 ===")
         
+        # クロスバリデーション結果を保存
+        cv_results_file = self.output_dir / f"{self.file_prefix}_cv_results.json"
+        cv_summary = {
+            'n_splits': len(self.cv_metrics),
+            'fold_results': self.cv_metrics,
+            'summary_statistics': {
+                'accuracy_mean': float(np.mean([m['accuracy'] for m in self.cv_metrics])),
+                'accuracy_std': float(np.std([m['accuracy'] for m in self.cv_metrics])),
+                'precision_mean': float(np.mean([m['precision'] for m in self.cv_metrics])),
+                'precision_std': float(np.std([m['precision'] for m in self.cv_metrics])),
+                'recall_mean': float(np.mean([m['recall'] for m in self.cv_metrics])),
+                'recall_std': float(np.std([m['recall'] for m in self.cv_metrics])),
+                'f1_mean': float(np.mean([m['f1'] for m in self.cv_metrics])),
+                'f1_std': float(np.std([m['f1'] for m in self.cv_metrics])),
+                'roc_auc_mean': float(np.mean([m['roc_auc'] for m in self.cv_metrics])),
+                'roc_auc_std': float(np.std([m['roc_auc'] for m in self.cv_metrics])),
+                'avg_precision_mean': float(np.mean([m['avg_precision'] for m in self.cv_metrics])),
+                'avg_precision_std': float(np.std([m['avg_precision'] for m in self.cv_metrics]))
+            }
+        }
+        with open(cv_results_file, 'w') as f:
+            json.dump(cv_summary, f, indent=2)
+        print(f"クロスバリデーション結果を保存: {cv_results_file}")
+        
+        # SHAP値の統計サマリーを計算・保存
+        shap_stats_file = self.output_dir / f"{self.file_prefix}_shap_statistics.csv"
+        shap_stats = []
+        for i, feature_name in enumerate(self.X.columns):
+            feature_shap = self.shap_values_sorted[:, i]
+            shap_stats.append({
+                'feature_name': feature_name,
+                'feature_id': int(feature_name.replace('feature_', '')),
+                'mean_abs_shap': float(np.abs(feature_shap).mean()),
+                'mean_shap': float(feature_shap.mean()),
+                'median_shap': float(np.median(feature_shap)),
+                'std_shap': float(feature_shap.std()),
+                'max_shap': float(feature_shap.max()),
+                'min_shap': float(feature_shap.min()),
+                'positive_ratio': float((feature_shap > 0).sum() / len(feature_shap))
+            })
+        shap_stats_df = pd.DataFrame(shap_stats)
+        shap_stats_df = shap_stats_df.sort_values('mean_abs_shap', ascending=False)
+        shap_stats_df.to_csv(shap_stats_file, index=False)
+        print(f"SHAP統計サマリーを保存: {shap_stats_file}")
+        
+        # Top-k特徴のランキングを保存
+        top_k = min(50, len(self.X.columns))
+        top_features_file = self.output_dir / f"{self.file_prefix}_top{top_k}_features.csv"
+        top_features_df = shap_stats_df.head(top_k)
+        top_features_df.to_csv(top_features_file, index=False)
+        print(f"Top-{top_k}特徴を保存: {top_features_file}")
+        
         # 介入特徴リストをJSON形式で保存
         intervention_file = self.output_dir / f"{self.file_prefix}_intervention_features.json"
         with open(intervention_file, 'w') as f:
@@ -627,6 +749,13 @@ class InterventionFeatureFinder:
                 'token_position': self.token_position,
                 'input_file': self.input_file,
                 'timestamp': datetime.now().isoformat(),
+                'model_hyperparameters': self.lgb_params,
+                'model_performance': {
+                    'roc_auc': float(self.roc_auc),
+                    'average_precision': float(self.avg_precision),
+                    **self.model_metrics
+                },
+                'cross_validation_summary': cv_summary['summary_statistics'],
                 'optimal_threshold': float(self.optimal_threshold),
                 'intervention_features': self.intervention_features,
                 'summary': {
@@ -645,24 +774,59 @@ class InterventionFeatureFinder:
             f.write(f"入力ファイル: {self.input_file}\n")
             f.write(f"トークン位置: {self.token_position}\n")
             f.write(f"分析日時: {datetime.now().isoformat()}\n\n")
-            f.write(f"データ統計:\n")
-            f.write(f"  総特徴数: {self.X.shape[1]}\n")
-            f.write(f"  総サンプル数: {self.X.shape[0]}\n")
-            f.write(f"  Flag=0: {(self.y == 0).sum()}\n")
-            f.write(f"  Flag=1: {(self.y == 1).sum()}\n\n")
-            f.write(f"モデル性能:\n")
-            f.write(f"  最適閾値: {self.optimal_threshold:.4f}\n\n")
-            f.write(f"介入特徴:\n")
-            f.write(f"  特定された介入特徴数: {len(self.intervention_features['feature_ids'])}\n\n")
+            
+            f.write(f"=== データ統計 ===\n")
+            f.write(f"総特徴数: {self.X.shape[1]}\n")
+            f.write(f"総サンプル数: {self.X.shape[0]}\n")
+            f.write(f"Flag=0 (非迎合): {(self.y == 0).sum()} ({(self.y == 0).sum() / len(self.y) * 100:.1f}%)\n")
+            f.write(f"Flag=1 (迎合): {(self.y == 1).sum()} ({(self.y == 1).sum() / len(self.y) * 100:.1f}%)\n\n")
+            
+            f.write(f"=== モデルハイパーパラメータ ===\n")
+            for key, value in self.lgb_params.items():
+                f.write(f"{key}: {value}\n")
+            f.write(f"\n")
+            
+            f.write(f"=== クロスバリデーション結果 ({self.lgb_params['n_splits']}-Fold) ===\n")
+            cv_acc = [m['accuracy'] for m in self.cv_metrics]
+            cv_prec = [m['precision'] for m in self.cv_metrics]
+            cv_rec = [m['recall'] for m in self.cv_metrics]
+            cv_f1 = [m['f1'] for m in self.cv_metrics]
+            cv_roc = [m['roc_auc'] for m in self.cv_metrics]
+            cv_ap = [m['avg_precision'] for m in self.cv_metrics]
+            
+            f.write(f"Accuracy:        {np.mean(cv_acc):.4f} ± {np.std(cv_acc):.4f}\n")
+            f.write(f"Precision:       {np.mean(cv_prec):.4f} ± {np.std(cv_prec):.4f}\n")
+            f.write(f"Recall:          {np.mean(cv_rec):.4f} ± {np.std(cv_rec):.4f}\n")
+            f.write(f"F1 Score:        {np.mean(cv_f1):.4f} ± {np.std(cv_f1):.4f}\n")
+            f.write(f"ROC AUC:         {np.mean(cv_roc):.4f} ± {np.std(cv_roc):.4f}\n")
+            f.write(f"Avg Precision:   {np.mean(cv_ap):.4f} ± {np.std(cv_ap):.4f}\n\n")
+            
+            f.write(f"=== 最終モデル性能（全データ統合） ===\n")
+            f.write(f"ROC AUC:         {self.roc_auc:.4f}\n")
+            f.write(f"Average Precision: {self.avg_precision:.4f}\n")
+            f.write(f"最適閾値:        {self.optimal_threshold:.4f}\n")
+            f.write(f"Accuracy:        {self.model_metrics['accuracy']:.4f}\n")
+            f.write(f"Precision:       {self.model_metrics['precision']:.4f}\n")
+            f.write(f"Recall:          {self.model_metrics['recall']:.4f}\n")
+            f.write(f"F1 Score:        {self.model_metrics['f1_score']:.4f}\n\n")
+            
+            f.write(f"=== 混同行列 ===\n")
+            f.write(f"                 予測: 非迎合  予測: 迎合\n")
+            f.write(f"実際: 非迎合      {self.model_metrics['true_negatives']:>6}      {self.model_metrics['false_positives']:>6}\n")
+            f.write(f"実際: 迎合        {self.model_metrics['false_negatives']:>6}      {self.model_metrics['true_positives']:>6}\n\n")
+            
+            f.write(f"=== 介入特徴 ===\n")
+            f.write(f"特定された介入特徴数: {len(self.intervention_features['feature_ids'])}\n\n")
             f.write(f"介入特徴詳細:\n")
-            for i, (feat_id, feat_name, shap_val, consistency) in enumerate(zip(
+            for i, (feat_id, feat_name, shap_val, consistency, importance) in enumerate(zip(
                 self.intervention_features['feature_ids'],
                 self.intervention_features['feature_names'],
                 self.intervention_features['mean_shap_values'],
-                self.intervention_features['consistency_scores']
+                self.intervention_features['consistency_scores'],
+                self.intervention_features['importance_scores']
             ), 1):
                 f.write(f"  {i}. {feat_name} (ID: {feat_id})\n")
-                f.write(f"     平均SHAP: {shap_val:.4f}, 一貫性: {consistency:.2%}\n")
+                f.write(f"     平均SHAP: {shap_val:.4f}, 一貫性: {consistency:.2%}, 重要度: {importance:.4f}\n")
         
         print(f"サマリーを保存: {summary_file}\n")
     
