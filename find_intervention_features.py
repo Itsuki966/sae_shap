@@ -35,7 +35,8 @@ from scipy.spatial.distance import pdist
 warnings.filterwarnings('ignore')
 plt.rcParams['font.size'] = 10
 sns.set_palette("husl")
-
+plt.rcParams['font.family'] = 'Hiragino Sans'  # macOS
+plt.rcParams['font.size'] = 10
 
 class InterventionFeatureFinder:
     """介入特徴を特定するためのメインクラス"""
