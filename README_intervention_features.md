@@ -1,269 +1,406 @@
-# SAE介入特徴探索プログラム
+# SAE介入特徴探索プログラム - 完全ガイド
 
-## 概要
+## 📋 概要
 
-このプログラムは、LLMの迎合性（Sycophancy）抑制のために介入すべきSAE特徴を特定するためのツールです。
-SHAP値分析、機械学習モデル、複数の可視化手法を組み合わせて、効果的で安全な介入ターゲットを発見します。
+このプログラムは、LLMの迎合性（Sycophancy）抑制のために介入すべきSAE特徴を特定します。
+機械学習モデル（LightGBM）、SHAP値分析、多層的検証を組み合わせて、**安全で効果的な介入ターゲット**を発見します。
 
-## 主な機能
+### 主な特徴
 
-### 1. データ分析パイプライン
-- JSONファイルからSAE特徴とsycophancy_flagを抽出
-- LightGBMによる二値分類モデルの学習（5-fold cross-validation）
-- SHAP値の計算と保存
+- ✅ **5段階フィルタリング**で信頼性の高い特徴を特定
+- ✅ **活性化頻度分析**で実用的な特徴を選択
+- ✅ **予測確率レベル別分析**で介入の優先度を判断
+- ✅ **誤分類分析（FP/FN/TP/TN）**でノイズ特徴を除外
+- ✅ **完全なトレーサビリティ**でフィルタリング過程を記録
 
-### 2. 可視化機能
+---
 
-#### ROC/PR曲線分析
-- ROC曲線とAUCスコア
-- Precision-Recall曲線とAverage Precision
-- 最適閾値の探索（F1スコア最大化、Youden's Index）
-
-#### 特徴の一貫性分析
-- 一貫性（Consistency）vs 純寄与（Net Contribution）のプロット
-- 介入候補特徴のハイライト表示
-- 特徴統計のCSV出力
-
-#### テンプレートタイプ別分析
-- 5つのテンプレート（base, I really like, I really dislike, I wrote, I didn't write）別のSHAP値ヒートマップ
-- テンプレート特異的な特徴の特定
-
-#### SHAP標準プロット
-- Beeswarm plot（特徴の寄与と分布）
-- Bar plot（特徴の重要度ランキング）
-
-### 3. 介入特徴の特定
-
-段階的フィルタリングアプローチ:
-
-1. **量的基準**: 重要度の高い特徴を選択（上位10%）
-2. **質的基準**: 迎合性を促進する方向（正のSHAP値）の特徴を選択
-3. **一貫性の確認**: 70%以上のサンプルで正の寄与をする特徴を選択
-4. **True Positiveでの検証**: 正しく迎合的と判定されたサンプルで寄与が高い特徴を選択
-5. **クラスター分析**: 高相関（> 0.9）の特徴を除外し、重複を削除
-
-### 4. 結果の保存
-
-#### プロット（`results/plots/`）
-- `{token_position}_{timestamp}_roc_pr_curves.png`: ROC/PR曲線
-- `{token_position}_{timestamp}_consistency_analysis.png`: 一貫性分析
-- `{token_position}_{timestamp}_template_heatmap.png`: テンプレート別ヒートマップ
-- `{token_position}_{timestamp}_shap_beeswarm.png`: SHAP Beeswarm plot
-- `{token_position}_{timestamp}_shap_bar.png`: SHAP Bar plot
-
-#### SHAP値（`results/shap_values/`）
-- `{token_position}_{timestamp}_shap_values.npz`: SHAP値、予測確率、真のラベルなどを含むNumPy圧縮ファイル
-
-#### 分析結果（`results/`）
-- `{token_position}_{timestamp}_intervention_features.json`: 最終的な介入特徴リスト（JSON形式）
-- `{token_position}_{timestamp}_feature_consistency_stats.csv`: 全特徴の一貫性統計
-- `{token_position}_{timestamp}_template_analysis.csv`: テンプレート別分析結果
-- `{token_position}_{timestamp}_summary.txt`: 分析サマリー（テキスト形式）
-
-## 使用方法
+## 🚀 クイックスタート
 
 ### 基本的な使い方
 
 ```bash
-python find_intervention_features.py --input combined_feedback_data.json --token_position prompt_last_token
+python find_intervention_features.py \
+  --input combined_feedback_data.json \
+  --token_position prompt_last_token
 ```
 
-### コマンドライン引数
+### 引数
 
-- `--input`, `-i`: 入力JSONファイルパス（必須）
-  - 例: `combined_feedback_data.json`
-  
-- `--token_position`, `-t`: 分析対象のトークン位置（必須）
-  - 例: `prompt_last_token`, `response_first_token`
-  
-- `--output`, `-o`: 結果の保存先ディレクトリ（オプション、デフォルト: `results`）
-  - 例: `results_v2`
+| 引数 | 短縮形 | 必須 | デフォルト | 説明 |
+|------|--------|------|-----------|------|
+| `--input` | `-i` | ❌ | `combined_feedback_data.json` | 入力JSONファイル |
+| `--token_position` | `-t` | ✅ | - | 分析対象のトークン位置 |
+| `--output` | `-o` | ❌ | `results` | 結果の保存先 |
 
 ### 使用例
 
 ```bash
-# 基本的な実行
-python find_intervention_features.py --input combined_feedback_data.json --token_position prompt_last_token
+# 例1: プロンプト最終トークンを分析
+python find_intervention_features.py -t prompt_last_token
 
-# 別のトークン位置で実行
-python find_intervention_features.py --input combined_feedback_data.json --token_position response_first_token
+# 例2: レスポンス最初のトークンを分析
+python find_intervention_features.py -t response_first_token
 
-# カスタム出力ディレクトリを指定
-python find_intervention_features.py --input combined_feedback_data_v2.json --token_position prompt_last_token --output results_v2
+# 例3: カスタム出力ディレクトリを指定
+python find_intervention_features.py \
+  -i data/experiment_v2.json \
+  -t prompt_last_token \
+  -o results_v2
 ```
 
-## 入力データ形式
+---
 
-入力JSONファイルは以下の構造を持つ必要があります:
+## 📊 分析フロー
+
+### 1. データ読み込みと前処理
+
+```
+入力JSONファイル
+  ↓
+SAE特徴抽出 (sae_activations)
+  ↓
+フラグ -1 のサンプルを除外
+  ↓
+DataFrame化 (疎行列処理)
+```
+
+**出力**: 特徴行列 X (n_samples × n_features)
+
+---
+
+### 2. モデル学習とSHAP値計算
+
+```
+5-Fold Stratified Cross-Validation
+  ↓
+各Foldで LightGBM 学習
+  ↓
+SHAP TreeExplainer で寄与度計算
+  ↓
+全Foldの結果を統合・整列
+```
+
+**重要**: 各Foldの性能指標（Accuracy, F1, ROC AUC等）を記録
+
+---
+
+### 3. 多層的検証による介入特徴の特定
+
+#### 🔍 **5段階フィルタリングプロセス**
+
+| ステップ | 基準 | 目的 |
+|---------|------|------|
+| **1. 量的基準** | 重要度 > 90パーセンタイル | 重要な特徴を選別 |
+| **2. 方向性** | 平均SHAP > 0 | 迎合性を促進する特徴のみ |
+| **3. 一貫性** | 正の寄与率 > 70% | 予測可能な効果 |
+| **4. TP検証** | TP平均SHAP > 0.01 | 実際の迎合で有効 |
+| **5. 重複除去** | 相関 < 0.9 | 冗長性を排除 |
+
+**トレーサビリティ**: 各ステップの候補数と除外理由を記録
+
+---
+
+### 4. 補完的分析
+
+#### 📈 **活性化頻度分析**
+
+```python
+# 各特徴について:
+activation_frequency = (特徴値 > 0.01).sum() / 総サンプル数
+mean_value_when_active = 活性化時の平均値
+```
+
+**目的**: 「ほとんど活性化しない特徴」を検出
+
+#### 🎯 **予測確率レベル別分析**
+
+| レベル | 閾値 | 意味 |
+|--------|------|------|
+| 高確信度迎合 | ≥ 0.7 | 確実な迎合サンプル |
+| 中程度迎合 | 0.3 - 0.7 | 曖昧なケース |
+| 非迎合 | < 0.3 | 明確に非迎合 |
+
+各レベルで主要特徴を分析 → **介入の優先度付け**
+
+#### ⚠️ **誤分類分析（FP/FN/TP/TN）**
+
+- **TP (True Positive)**: 確実な介入候補
+- **FP (False Positive)**: ノイズ特徴（除外対象）
+- **FN (False Negative)**: 見逃された特徴
+- **TN (True Negative)**: 非迎合を示す特徴
+
+---
+
+## 📁 出力ファイル構造
+
+```
+results/
+└── experiments/
+    └── {token_position}_{timestamp}/
+        ├── config.json                    # 実験設定
+        ├── summary.txt                    # テキストサマリー
+        ├── data/
+        │   ├── cv_results.json            # CVの詳細結果
+        │   ├── shap_values.npz            # SHAP値データ
+        │   ├── shap_statistics.csv        # ✨ 活性化頻度・効果量含む
+        │   ├── top50_features.csv         # 重要特徴ランキング
+        │   ├── intervention_features.json # ✨ フィルタリング過程含む
+        │   ├── feature_consistency_stats.csv
+        │   ├── template_analysis.csv
+        │   ├── prediction_level_analysis.csv  # ✨ NEW
+        │   └── misclassification_analysis.csv # ✨ NEW
+        └── figures/
+            ├── 01_model_performance.png
+            ├── 02_shap_beeswarm.png
+            ├── 03_shap_bar.png
+            ├── 04_consistency_analysis.png
+            └── 05_template_heatmap.png
+```
+
+### ✨ 新規追加ファイル
+
+#### 1. `shap_statistics.csv` に追加された列
+
+| 列名 | 説明 | 用途 |
+|------|------|------|
+| `activation_frequency` | 活性化頻度（> 0.01） | 実用性の評価 |
+| `mean_value_when_active` | 活性化時の平均値 | 活性化強度 |
+| `effect_size` | 効果量（標準化SHAP） | 統計的有意性 |
+
+#### 2. `prediction_level_analysis.csv`
+
+```csv
+prediction_level,sample_count,rank,feature_name,feature_id,mean_shap,mean_abs_shap
+High Confidence Sycophancy (≥0.7),150,1,feature_1234,1234,0.0456,0.0456
+High Confidence Sycophancy (≥0.7),150,2,feature_5678,5678,0.0389,0.0389
+...
+```
+
+**用途**: 確信度別の主要特徴を特定 → 介入の優先順位
+
+#### 3. `misclassification_analysis.csv`
+
+```csv
+category,description,rank,feature_name,feature_id,mean_shap,sample_count
+TP,確実な介入候補,1,feature_1234,1234,0.0456,120
+FP,ノイズ特徴の可能性,1,feature_9999,9999,0.0123,25
+...
+```
+
+**用途**: ノイズ特徴の検出、介入候補の信頼性評価
+
+#### 4. `intervention_features.json` に追加
 
 ```json
 {
-  "metadata": {
-    "model_name": "string",
-    "sae_release": "string",
-    "sae_id": "string"
-  },
-  "results": [
+  "filtering_pipeline": [
     {
-      "question_id": "number",
-      "dataset": "string",
-      "base_text": "string",
-      "variations": [
-        {
-          "template_type": "string",
-          "prompt": "string",
-          "response": "string",
-          "sae_activations": {
-            "prompt_last_token": {
-              "feature_id": "activation_value",
-              ...
-            }
-          },
-          "sycophancy_flag": 0 or 1 or -1,
-          "reason": "string"
-        }
-      ]
-    }
+      "step": 1,
+      "criterion": "importance > 90th percentile (0.012345)",
+      "candidates_before": 16384,
+      "candidates_after": 1638,
+      "removed_count": 14746
+    },
+    ...
   ]
 }
 ```
 
-**注意**: `sycophancy_flag == -1` のサンプルは自動的に除外されます。
+**用途**: 論文での説明、パラメータ調整の追跡
 
-## 出力ファイルの詳細
+---
 
-### 介入特徴リスト（JSON）
+## 🔬 分析の詳細
 
-```json
-{
-  "token_position": "prompt_last_token",
-  "input_file": "combined_feedback_data.json",
-  "timestamp": "2025-11-24T12:34:56",
-  "optimal_threshold": 0.35,
-  "intervention_features": {
-    "feature_ids": [123, 456, 789],
-    "feature_names": ["feature_123", "feature_456", "feature_789"],
-    "mean_shap_values": [0.0234, 0.0187, 0.0156],
-    "consistency_scores": [0.85, 0.78, 0.82],
-    "importance_scores": [0.0245, 0.0198, 0.0167]
-  },
-  "summary": {
-    "total_features": 16384,
-    "total_samples": 500,
-    "intervention_feature_count": 3
-  }
-}
+### LightGBMハイパーパラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|---|------|
+| `objective` | binary | 二値分類 |
+| `num_leaves` | 31 | ツリーの複雑さ |
+| `learning_rate` | 0.05 | 学習率 |
+| `feature_fraction` | 0.9 | 特徴サンプリング |
+| `bagging_fraction` | 0.8 | データサンプリング |
+| `min_data_in_leaf` | 20 | 過学習防止 |
+| `max_depth` | -1 | 深さ制限なし |
+
+### SHAP値の解釈
+
+| SHAP値 | 意味 |
+|--------|------|
+| > 0 | その特徴が迎合性を**促進** |
+| < 0 | その特徴が迎合性を**抑制** |
+| ≈ 0 | 影響が小さい/不一致 |
+
+**重要**: 平均SHAP値だけでなく、一貫性（正の寄与率）も確認が必須
+
+---
+
+## 📈 可視化の読み方
+
+### 1. ROC/PR曲線（`01_model_performance.png`）
+
+- **ROC AUC**: モデルの識別能力（高いほど良い）
+- **Average Precision**: 不均衡データでの性能（重要）
+
+### 2. SHAP Beeswarm Plot（`02_shap_beeswarm.png`）
+
+⚠️ **注意**: これ**だけ**では介入特徴を決定しない！
+
+| 見た目 | 実際の可能性 | 対策 |
+|--------|------------|------|
+| 赤い点が右側 | 5%しか活性化しない | 活性化頻度を確認 |
+| 明確な色分離 | 50%は負の寄与 | 一貫性スコアを確認 |
+| 上位に表示 | 特定テンプレートのみ | テンプレート別分析 |
+
+### 3. 一貫性分析（`04_consistency_analysis.png`）
+
+- **右上象限**: 一貫して迎合性を促進 → **最優先介入候補**
+- **右下象限**: 一貫して抑制 → 介入すると逆効果
+- **左側**: 文脈依存 → 介入リスク高い
+
+### 4. テンプレート別ヒートマップ（`05_template_heatmap.png`）
+
+- **全テンプレートで赤**: 汎用的な迎合性特徴
+- **特定テンプレートのみ赤**: テンプレート特異的
+
+---
+
+## 🎯 介入特徴の選択基準
+
+### ✅ 優れた介入特徴の条件
+
+1. ✔️ **高重要度**: 上位10%の影響力
+2. ✔️ **正の寄与**: 平均SHAP > 0
+3. ✔️ **高一貫性**: 70%以上のサンプルで正の寄与
+4. ✔️ **TP検証済み**: 実際の迎合サンプルで有効
+5. ✔️ **適度な活性化**: 5%以上のサンプルで活性化
+6. ✔️ **低冗長性**: 他の候補と相関 < 0.9
+
+### ❌ 除外すべき特徴
+
+- ❌ FPで強く寄与（ノイズの可能性）
+- ❌ 活性化頻度 < 5%（ほとんど無意味）
+- ❌ 一貫性 < 60%（予測不可能）
+- ❌ 効果量が小さい（統計的に不安定）
+
+---
+
+## 💡 論文執筆での活用
+
+### Methods セクション
+
+**使用するファイル**:
+- `config.json`: モデル設定
+- `intervention_features.json` の `filtering_pipeline`: フィルタリング手順
+
+**記載例**:
+```
+We employed a 5-step filtering process to identify intervention targets:
+(1) Feature importance (top 10%), (2) Positive contribution (mean SHAP > 0),
+(3) Consistency (>70% positive ratio), (4) True positive validation,
+(5) Redundancy removal (correlation < 0.9).
 ```
 
-### SHAP値データ（NPZ）
+### Results セクション
 
-NumPy圧縮ファイルに以下のデータが含まれます:
+**使用するファイル**:
+- `summary.txt`: モデル性能（平均±標準偏差）
+- `cv_results.json`: 詳細な統計
+- `figures/*.png`: 可視化
 
+**数値の報告**:
+```
+Cross-validation results (5-fold):
+ROC AUC: 0.85 ± 0.03
+F1 Score: 0.78 ± 0.04
+```
+
+### Tables
+
+| テーブル | ファイル | 内容 |
+|---------|---------|------|
+| Table 1 | `top50_features.csv` | 重要特徴ランキング |
+| Table 2 | `intervention_features.json` | 最終介入特徴リスト |
+| Supp. Table 1 | `shap_statistics.csv` | 全特徴の統計 |
+| Supp. Table 2 | `prediction_level_analysis.csv` | レベル別分析 |
+
+### Supplementary Materials
+
+- `misclassification_analysis.csv`: 誤分類の詳細分析
+- `filtering_pipeline`: フィルタリング過程の完全な記録
+
+---
+
+## 🔧 トラブルシューティング
+
+### エラー1: `maximum feature index in dataset is -1`
+
+**原因**: 指定したトークン位置にSAE特徴が存在しない
+
+**解決策**:
 ```python
-import numpy as np
-
-data = np.load("results/shap_values/prompt_last_token_20251124_123456_shap_values.npz")
-
-# 利用可能なデータ
-shap_values = data['shap_values']          # shape: (n_samples, n_features)
-y_true = data['y_true']                    # shape: (n_samples,)
-y_pred_proba = data['y_pred_proba']        # shape: (n_samples,)
-feature_names = data['feature_names']      # shape: (n_features,)
-template_types = data['template_types']    # shape: (n_samples,)
+import json
+with open("combined_feedback_data.json") as f:
+    data = json.load(f)
+    first_sample = data["results"][0]["variations"][0]
+    print("利用可能なトークン位置:")
+    print(list(first_sample["sae_activations"].keys()))
 ```
 
-## 分析戦略の詳細
+### エラー2: メモリ不足
 
-### 1. ROC/PR曲線の活用
+**原因**: 大規模なデータセット（> 10,000サンプル、> 100,000特徴）
 
-ROC/PR曲線は直接的に介入特徴を決定するものではありませんが、以下の間接的な活用が可能です:
+**解決策**:
+1. サンプル数を削減（代表的なサンプルのみ）
+2. 低活性化特徴を事前除外（活性化頻度 < 1%）
 
-- **誤分類サンプルの分析**: False Positiveに強く寄与する特徴はノイズの可能性があり、介入候補から除外すべき
-- **True Positiveの検証**: 確実に迎合的と判定されたサンプルで寄与が高い特徴は、信頼性の高い介入候補
+### 警告: 介入特徴が少なすぎる（< 5個）
 
-### 2. 一貫性分析
+**原因**: フィルタリング基準が厳しすぎる
 
-特徴の一貫性（Consistency）を分析し、文脈依存的な特徴を避けます:
-
-- **高一貫性・正の寄与**: 最優先介入ターゲット（右上象限）
-- **低一貫性**: 文脈依存の特徴（介入リスクが高い）
-
-### 3. テンプレート別分析
-
-5つのテンプレートタイプでの寄与パターンを分析:
-
-- **全テンプレートで寄与**: 汎用的な迎合性特徴（優先介入）
-- **特定テンプレートのみ**: テンプレート特異的特徴（選択的介入）
-
-### 4. クラスター分析
-
-高相関の特徴を除外し、効率的な介入セットを構築:
-
-- 相関 > 0.9 の特徴は冗長性が高いため、代表特徴のみを選択
-
-## 論文執筆用の出力
-
-以下のファイルが論文執筆に有用です:
-
-### 図表
-- ROC/PR曲線: モデルの予測性能を示す
-- 一貫性分析プロット: 介入特徴の選択基準を視覚化
-- テンプレート別ヒートマップ: 特徴の汎用性を示す
-- SHAP Beeswarm/Bar plot: 特徴の重要度を示す
-
-### 数値データ
-- `intervention_features.json`: 介入特徴の定量的指標
-- `feature_consistency_stats.csv`: 全特徴の統計情報
-- `summary.txt`: 分析の概要と主要な数値
-
-### 再現性
-- `shap_values.npz`: SHAP値の完全なデータセット（追加分析用）
-
-## 依存関係
-
-```
-numpy
-pandas
-matplotlib
-seaborn
-shap
-lightgbm
-scikit-learn
-scipy
+**調整方法** (`find_intervention_features()` 内):
+```python
+# 閾値を緩和
+importance_threshold = np.percentile(mean_abs_shap, 85)  # 90 → 85
+consistency_threshold = 0.65  # 0.7 → 0.65
+tp_threshold = 0.005  # 0.01 → 0.005
 ```
 
-インストール:
-```bash
-pip install numpy pandas matplotlib seaborn shap lightgbm scikit-learn scipy
+---
+
+## 📚 依存関係
+
+```txt
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.4.0
+seaborn>=0.11.0
+shap>=0.41.0
+lightgbm>=3.3.0
+scikit-learn>=1.0.0
+scipy>=1.7.0
 ```
 
-## トラブルシューティング
 
-### メモリエラー
+## 📖 参考文献
 
-大規模なデータセットでメモリエラーが発生する場合:
-- SHAP値の計算をバッチ処理に変更
-- 特徴数を削減（事前に低活性化の特徴を除外）
+- SHAP: Lundberg & Lee (2017) "A Unified Approach to Interpreting Model Predictions"
+- LightGBM: Ke et al. (2017) "LightGBM: A Highly Efficient Gradient Boosting Decision Tree"
+- SAE: Bricken et al. (2023) "Towards Monosemanticity: Decomposing Language Models With Dictionary Learning"
 
-### 介入特徴が見つからない
+---
 
-以下の閾値を調整してください（`find_intervention_features()` メソッド内）:
-- 重要度のパーセンタイル: `90` → `85` など
-- 一貫性の閾値: `0.7` → `0.6` など
-- True Positive検証の閾値: `0.01` → `0.005` など
+## 📧 サポート
 
-## ライセンス
+問題が発生した場合:
+1. `config.json` と `summary.txt` を確認
+2. `filtering_pipeline` で各ステップの候補数を確認
+3. エラーメッセージとデータ統計を記録
 
-研究用途での使用を想定しています。
+---
 
-## 引用
-
-この研究を引用する場合は、以下の形式を使用してください:
-
-```
-[著者名], [年], "SAE特徴を用いたLLM迎合性の抑制", [学会/ジャーナル名]
-```
-
-## 連絡先
-
-質問や問題がある場合は、[連絡先情報] までご連絡ください。
+**最終更新**: 2025-11-25  
+**バージョン**: 2.0（優先度高機能実装版）
