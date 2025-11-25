@@ -526,7 +526,7 @@ class InterventionFeatureFinder:
         print(f"テンプレート別ヒートマップを保存しました\n")
     
     def analyze_misclassified_samples(self):
-        """誤分類サンプルの分析"""
+        """誤分類サンプルの分析と詳細保存"""
         print("=== 誤分類サンプルの分析 ===")
         
         y_pred = (self.y_pred_proba_sorted >= self.optimal_threshold).astype(int)
@@ -534,78 +534,144 @@ class InterventionFeatureFinder:
         false_positives = (self.y_true_sorted == 0) & (y_pred == 1)
         false_negatives = (self.y_true_sorted == 1) & (y_pred == 0)
         true_positives = (self.y_true_sorted == 1) & (y_pred == 1)
+        true_negatives = (self.y_true_sorted == 0) & (y_pred == 0)
         
+        print(f"True Positives: {true_positives.sum()}")
+        print(f"True Negatives: {true_negatives.sum()}")
         print(f"False Positives: {false_positives.sum()}")
         print(f"False Negatives: {false_negatives.sum()}")
-        print(f"True Positives: {true_positives.sum()}")
         
-        # False Positiveの主要特徴
-        if false_positives.sum() > 0:
-            fp_shap_values = self.shap_values_sorted[false_positives]
-            fp_mean_shap = fp_shap_values.mean(axis=0)
-            fp_top_features = np.argsort(np.abs(fp_mean_shap))[::-1][:10]
-            
-            print("\nFalse Positiveに強く寄与する特徴（ノイズの可能性）:")
-            for idx in fp_top_features:
-                feature_name = self.X.columns[idx]
-                mean_contribution = fp_mean_shap[idx]
-                print(f"  {feature_name}: {mean_contribution:.4f}")
+        # 各カテゴリの詳細分析を保存
+        misclassification_analysis = []
         
-        # True Positiveの主要特徴
-        if true_positives.sum() > 0:
-            tp_shap_values = self.shap_values_sorted[true_positives]
-            tp_mean_shap = tp_shap_values.mean(axis=0)
-            tp_top_features = np.argsort(tp_mean_shap)[::-1][:10]
-            
-            print("\nTrue Positiveに強く寄与する特徴（確実な介入候補）:")
-            for idx in tp_top_features:
-                feature_name = self.X.columns[idx]
-                mean_contribution = tp_mean_shap[idx]
-                print(f"  {feature_name}: {mean_contribution:.4f}")
+        categories = [
+            ('TP', true_positives, '確実な介入候補'),
+            ('FP', false_positives, 'ノイズ特徴の可能性'),
+            ('FN', false_negatives, '見逃された特徴'),
+            ('TN', true_negatives, '非迎合を示す特徴')
+        ]
+        
+        for category_name, mask, description in categories:
+            if mask.sum() > 0:
+                category_shap = self.shap_values_sorted[mask]
+                category_mean_shap = category_shap.mean(axis=0)
+                
+                # 上位10特徴を記録
+                if category_name in ['TP', 'FP']:
+                    top_indices = np.argsort(category_mean_shap)[::-1][:10]
+                else:
+                    top_indices = np.argsort(np.abs(category_mean_shap))[::-1][:10]
+                
+                for rank, idx in enumerate(top_indices, 1):
+                    misclassification_analysis.append({
+                        'category': category_name,
+                        'description': description,
+                        'rank': rank,
+                        'feature_name': self.X.columns[idx],
+                        'feature_id': int(self.X.columns[idx].replace('feature_', '')),
+                        'mean_shap': float(category_mean_shap[idx]),
+                        'sample_count': int(mask.sum())
+                    })
+        
+        # CSVに保存
+        misclass_df = pd.DataFrame(misclassification_analysis)
+        misclass_file = self.data_dir / "misclassification_analysis.csv"
+        misclass_df.to_csv(misclass_file, index=False)
+        print(f"誤分類分析を保存: {misclass_file}")
+        
+        # 表示
+        print("\nTrue Positiveに強く寄与する特徴（確実な介入候補）:")
+        tp_features = misclass_df[misclass_df['category'] == 'TP'].head(5)
+        for _, row in tp_features.iterrows():
+            print(f"  {row['feature_name']}: {row['mean_shap']:.4f}")
+        
+        print("\nFalse Positiveに強く寄与する特徴（ノイズの可能性）:")
+        fp_features = misclass_df[misclass_df['category'] == 'FP'].head(5)
+        for _, row in fp_features.iterrows():
+            print(f"  {row['feature_name']}: {row['mean_shap']:.4f}")
         
         print()
     
     def find_intervention_features(self):
-        """段階的フィルタリングで介入特徴を特定"""
+        """段階的フィルタリングで介入特徴を特定（トレーサビリティ付き）"""
         print("=== 介入特徴の特定 ===")
         
         y_pred = (self.y_pred_proba_sorted >= self.optimal_threshold).astype(int)
+        mean_abs_shap = np.abs(self.shap_values_sorted).mean(axis=0)
+        mean_shap = self.shap_values_sorted.mean(axis=0)
+        
+        # フィルタリングプロセスの記録
+        filtering_pipeline = []
         
         # ステップ1: 量的基準（重要度の高い特徴）
-        mean_abs_shap = np.abs(self.shap_values_sorted).mean(axis=0)
-        important_features = np.where(mean_abs_shap > np.percentile(mean_abs_shap, 90))[0]
+        all_features = np.arange(len(self.X.columns))
+        importance_threshold = np.percentile(mean_abs_shap, 90)
+        important_features = np.where(mean_abs_shap > importance_threshold)[0]
+        
+        filtering_pipeline.append({
+            'step': 1,
+            'criterion': f'importance > 90th percentile ({importance_threshold:.6f})',
+            'candidates_before': len(all_features),
+            'candidates_after': len(important_features),
+            'removed_count': len(all_features) - len(important_features)
+        })
         print(f"ステップ1 - 重要特徴候補: {len(important_features)}個")
         
         # ステップ2: 質的基準（迎合性を促進する方向）
-        mean_shap = self.shap_values_sorted.mean(axis=0)
         positive_contributors = important_features[mean_shap[important_features] > 0]
+        
+        filtering_pipeline.append({
+            'step': 2,
+            'criterion': 'mean_shap > 0 (sycophancy promoting)',
+            'candidates_before': len(important_features),
+            'candidates_after': len(positive_contributors),
+            'removed_count': len(important_features) - len(positive_contributors)
+        })
         print(f"ステップ2 - 迎合性促進特徴: {len(positive_contributors)}個")
         
         # ステップ3: 一貫性の確認
+        consistency_threshold = 0.7
         consistent_features = []
         for feat_idx in positive_contributors:
             positive_ratio = (self.shap_values_sorted[:, feat_idx] > 0).sum() / len(self.shap_values_sorted)
-            if positive_ratio > 0.7:
+            if positive_ratio > consistency_threshold:
                 consistent_features.append(feat_idx)
+        
+        filtering_pipeline.append({
+            'step': 3,
+            'criterion': f'positive_ratio > {consistency_threshold} (consistency)',
+            'candidates_before': len(positive_contributors),
+            'candidates_after': len(consistent_features),
+            'removed_count': len(positive_contributors) - len(consistent_features)
+        })
         print(f"ステップ3 - 一貫性のある特徴: {len(consistent_features)}個")
         
         # ステップ4: True Positiveでの検証
         tp_mask = (self.y_true_sorted == 1) & (y_pred == 1)
         tp_shap = self.shap_values_sorted[tp_mask]
+        tp_threshold = 0.01
         
         validated_features = []
         for feat_idx in consistent_features:
             tp_mean = tp_shap[:, feat_idx].mean()
-            if tp_mean > 0.01:
+            if tp_mean > tp_threshold:
                 validated_features.append(feat_idx)
+        
+        filtering_pipeline.append({
+            'step': 4,
+            'criterion': f'TP_mean_shap > {tp_threshold} (validated on true positives)',
+            'candidates_before': len(consistent_features),
+            'candidates_after': len(validated_features),
+            'removed_count': len(consistent_features) - len(validated_features)
+        })
         print(f"ステップ4 - 検証済み介入ターゲット: {len(validated_features)}個")
         
         # ステップ5: クラスター分析で重複除去
+        correlation_threshold = 0.9
         if len(validated_features) > 1:
             validated_shap = self.shap_values_sorted[:, validated_features]
             shap_correlation = np.corrcoef(validated_shap.T)
             
-            # 類似度が高すぎる特徴を除外（相関 > 0.9）
             unique_features = []
             used = set()
             
@@ -614,16 +680,25 @@ class InterventionFeatureFinder:
                     continue
                 unique_features.append(feat_idx)
                 
-                # この特徴と高相関の特徴をマーク
                 for j in range(i + 1, len(validated_features)):
-                    if abs(shap_correlation[i, j]) > 0.9:
+                    if abs(shap_correlation[i, j]) > correlation_threshold:
                         used.add(j)
             
             final_features = unique_features
         else:
             final_features = validated_features
         
+        filtering_pipeline.append({
+            'step': 5,
+            'criterion': f'remove high correlation (> {correlation_threshold})',
+            'candidates_before': len(validated_features),
+            'candidates_after': len(final_features),
+            'removed_count': len(validated_features) - len(final_features)
+        })
         print(f"ステップ5 - 最終介入特徴: {len(final_features)}個\n")
+        
+        # フィルタリングプロセスを保存
+        self.filtering_pipeline = filtering_pipeline
         
         # 最終的な介入特徴リストを作成
         self.intervention_features = {
@@ -659,6 +734,57 @@ class InterventionFeatureFinder:
         print()
         
         return self.intervention_features
+    
+    def _analyze_prediction_levels(self, output_file):
+        """予測確率レベル別の特徴寄与を分析"""
+        print("=== 予測確率レベル別分析 ===")
+        
+        # 予測確率を3つのレベルに分割
+        high_conf_syc = self.y_pred_proba_sorted >= 0.7
+        moderate_syc = (self.y_pred_proba_sorted >= 0.3) & (self.y_pred_proba_sorted < 0.7)
+        low_syc = self.y_pred_proba_sorted < 0.3
+        
+        levels = [
+            ('High Confidence Sycophancy (≥0.7)', high_conf_syc),
+            ('Moderate Sycophancy (0.3-0.7)', moderate_syc),
+            ('Non-Sycophancy (<0.3)', low_syc)
+        ]
+        
+        level_analysis = []
+        
+        for level_name, mask in levels:
+            if mask.sum() == 0:
+                continue
+                
+            level_shap = self.shap_values_sorted[mask]
+            level_mean_shap = level_shap.mean(axis=0)
+            
+            # 上位10特徴を記録
+            top_indices = np.argsort(np.abs(level_mean_shap))[::-1][:10]
+            
+            for rank, idx in enumerate(top_indices, 1):
+                level_analysis.append({
+                    'prediction_level': level_name,
+                    'sample_count': int(mask.sum()),
+                    'rank': rank,
+                    'feature_name': self.X.columns[idx],
+                    'feature_id': int(self.X.columns[idx].replace('feature_', '')),
+                    'mean_shap': float(level_mean_shap[idx]),
+                    'mean_abs_shap': float(np.abs(level_mean_shap[idx]))
+                })
+        
+        level_df = pd.DataFrame(level_analysis)
+        level_df.to_csv(output_file, index=False)
+        print(f"予測レベル別分析を保存: {output_file}")
+        
+        # サマリー表示
+        for level_name, mask in levels:
+            if mask.sum() > 0:
+                print(f"\n{level_name}: {mask.sum()}サンプル")
+                level_data = level_df[level_df['prediction_level'] == level_name].head(3)
+                for _, row in level_data.iterrows():
+                    print(f"  {row['rank']}. {row['feature_name']}: {row['mean_shap']:.4f}")
+        print()
     
     def create_shap_plots(self):
         """SHAP標準プロットを作成"""
@@ -740,21 +866,37 @@ class InterventionFeatureFinder:
             json.dump(cv_summary, f, indent=2)
         print(f"クロスバリデーション結果を保存: {cv_results_file}")
         
-        # SHAP値の統計サマリーを計算・保存
+        # SHAP値の統計サマリーを計算・保存（活性化頻度と効果量を追加）
         shap_stats_file = self.data_dir / "shap_statistics.csv"
+        activation_threshold = 0.01  # SAE特徴の活性化閾値
+        
         shap_stats = []
         for i, feature_name in enumerate(self.X.columns):
             feature_shap = self.shap_values_sorted[:, i]
+            feature_values = self.X.values[:, i]
+            
+            # 活性化頻度の計算
+            activated_mask = feature_values > activation_threshold
+            activation_freq = float(activated_mask.sum() / len(feature_values))
+            mean_value_when_active = float(feature_values[activated_mask].mean()) if activated_mask.any() else 0.0
+            
+            # 効果量の計算（標準化されたSHAP値）
+            std_shap = feature_shap.std()
+            effect_size = float(np.abs(feature_shap).mean() / std_shap) if std_shap > 0 else 0.0
+            
             shap_stats.append({
                 'feature_name': feature_name,
                 'feature_id': int(feature_name.replace('feature_', '')),
                 'mean_abs_shap': float(np.abs(feature_shap).mean()),
                 'mean_shap': float(feature_shap.mean()),
                 'median_shap': float(np.median(feature_shap)),
-                'std_shap': float(feature_shap.std()),
+                'std_shap': float(std_shap),
                 'max_shap': float(feature_shap.max()),
                 'min_shap': float(feature_shap.min()),
-                'positive_ratio': float((feature_shap > 0).sum() / len(feature_shap))
+                'positive_ratio': float((feature_shap > 0).sum() / len(feature_shap)),
+                'activation_frequency': activation_freq,
+                'mean_value_when_active': mean_value_when_active,
+                'effect_size': effect_size
             })
         shap_stats_df = pd.DataFrame(shap_stats)
         shap_stats_df = shap_stats_df.sort_values('mean_abs_shap', ascending=False)
@@ -767,6 +909,10 @@ class InterventionFeatureFinder:
         top_features_df = shap_stats_df.head(top_k)
         top_features_df.to_csv(top_features_file, index=False)
         print(f"Top-{top_k}特徴を保存: {top_features_file}")
+        
+        # 予測確率レベル別の分析
+        pred_level_file = self.data_dir / "prediction_level_analysis.csv"
+        self._analyze_prediction_levels(pred_level_file)
         
         # 介入特徴リストをJSON形式で保存
         intervention_file = self.data_dir / "intervention_features.json"
@@ -784,6 +930,7 @@ class InterventionFeatureFinder:
                 'cross_validation_summary': cv_summary['summary_statistics'],
                 'optimal_threshold': float(self.optimal_threshold),
                 'intervention_features': self.intervention_features,
+                'filtering_pipeline': self.filtering_pipeline,
                 'summary': {
                     'total_features': self.X.shape[1],
                     'total_samples': self.X.shape[0],
