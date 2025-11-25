@@ -911,7 +911,7 @@ def main():
     parser.add_argument(
         '--input', '-i',
         type=str,
-        required=True,
+        default='combined_feedback_data.json',
         help='入力JSONファイルパス（例: combined_feedback_data.json）'
     )
     
