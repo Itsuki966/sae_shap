@@ -20,11 +20,18 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 import shap
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
+    roc_curve, auc, precision_recall_curve, average_precision_score, confusion_matrix
+)
 
 warnings.filterwarnings('ignore')
+plt.rcParams['font.family'] = 'Hiragino Sans'  # macOS
+plt.rcParams['font.size'] = 10
 
 
 class FeatureSelector:
@@ -64,6 +71,14 @@ class FeatureSelector:
         self.template_types = None
         self.shap_values = None
         self.feature_names = None
+        self.y_true = None
+        self.y_pred_proba = None
+        
+        # モデル性能指標
+        self.model_metrics = {}
+        self.roc_auc = None
+        self.avg_precision = None
+        self.optimal_threshold = None
         
         # キャッシュファイルのパス
         self.shap_cache_path = self.data_dir / "shap_values.npz"
@@ -134,6 +149,8 @@ class FeatureSelector:
             cached_data = np.load(self.shap_cache_path, allow_pickle=True)
             self.shap_values = cached_data['shap_values']
             self.feature_names = cached_data['feature_names']
+            self.y_true = cached_data['y_true']
+            self.y_pred_proba = cached_data['y_pred_proba']
             print(f"SHAP値を読み込み: {self.shap_values.shape}")
             print(f"特徴名数: {len(self.feature_names)}\n")
             return
@@ -218,24 +235,24 @@ class FeatureSelector:
         self.feature_names = self.X.columns.to_numpy()
         
         # 全体の性能を表示
-        y_true = np.array(all_y_true)[sorted_idx]
-        y_pred_proba = np.array(all_y_pred_proba)[sorted_idx]
-        y_pred = (y_pred_proba >= 0.5).astype(int)
+        self.y_true = np.array(all_y_true)[sorted_idx]
+        self.y_pred_proba = np.array(all_y_pred_proba)[sorted_idx]
+        y_pred = (self.y_pred_proba >= 0.5).astype(int)
         
         print(f"\n=== 全体性能 ===")
-        print(f"Accuracy:  {accuracy_score(y_true, y_pred):.4f}")
-        print(f"Precision: {precision_score(y_true, y_pred, zero_division=0):.4f}")
-        print(f"Recall:    {recall_score(y_true, y_pred, zero_division=0):.4f}")
-        print(f"F1 Score:  {f1_score(y_true, y_pred, zero_division=0):.4f}")
-        print(f"ROC AUC:   {roc_auc_score(y_true, y_pred_proba):.4f}\n")
+        print(f"Accuracy:  {accuracy_score(self.y_true, y_pred):.4f}")
+        print(f"Precision: {precision_score(self.y_true, y_pred, zero_division=0):.4f}")
+        print(f"Recall:    {recall_score(self.y_true, y_pred, zero_division=0):.4f}")
+        print(f"F1 Score:  {f1_score(self.y_true, y_pred, zero_division=0):.4f}")
+        print(f"ROC AUC:   {roc_auc_score(self.y_true, self.y_pred_proba):.4f}\n")
         
         # キャッシュに保存
         np.savez(
             self.shap_cache_path,
             shap_values=self.shap_values,
             feature_names=self.feature_names,
-            y_true=y_true,
-            y_pred_proba=y_pred_proba
+            y_true=self.y_true,
+            y_pred_proba=self.y_pred_proba
         )
         print(f"SHAP値をキャッシュに保存: {self.shap_cache_path}\n")
     
@@ -331,6 +348,124 @@ class FeatureSelector:
         
         return df_metrics
     
+    def analyze_roc_pr_curves(self):
+        """ROC曲線とPR曲線を分析"""
+        print("=== ROC/PR曲線の分析 ===")
+        
+        # ROC曲線
+        fpr, tpr, thresholds_roc = roc_curve(self.y_true, self.y_pred_proba)
+        roc_auc = auc(fpr, tpr)
+        
+        # PR曲線
+        precision, recall, thresholds_pr = precision_recall_curve(
+            self.y_true, self.y_pred_proba
+        )
+        avg_precision = average_precision_score(self.y_true, self.y_pred_proba)
+        
+        # メトリクスを保存
+        self.roc_auc = roc_auc
+        self.avg_precision = avg_precision
+        
+        print(f"ROC AUC: {roc_auc:.4f}")
+        print(f"Average Precision: {avg_precision:.4f}")
+        
+        # 可視化
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # ROC曲線
+        ax1.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
+        ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
+        ax1.set_xlim([0.0, 1.0])
+        ax1.set_ylim([0.0, 1.05])
+        ax1.set_xlabel('False Positive Rate', fontsize=12)
+        ax1.set_ylabel('True Positive Rate', fontsize=12)
+        ax1.set_title('ROC Curve', fontsize=14, fontweight='bold')
+        ax1.legend(loc="lower right")
+        ax1.grid(alpha=0.3)
+        
+        # PR曲線
+        ax2.plot(recall, precision, color='blue', lw=2, label=f'PR curve (AP = {avg_precision:.3f})')
+        ax2.axhline(
+            y=self.y_true.mean(), color='navy', linestyle='--', lw=2,
+            label=f'Baseline ({self.y_true.mean():.3f})'
+        )
+        ax2.set_xlim([0.0, 1.0])
+        ax2.set_ylim([0.0, 1.05])
+        ax2.set_xlabel('Recall', fontsize=12)
+        ax2.set_ylabel('Precision', fontsize=12)
+        ax2.set_title('Precision-Recall Curve', fontsize=14, fontweight='bold')
+        ax2.legend(loc="lower left")
+        ax2.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(self.figures_dir / "model_performance.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 最適閾値の探索
+        self._find_optimal_threshold(thresholds_roc, tpr, fpr)
+        
+        print(f"ROC/PR曲線を保存しました\n")
+    
+    def _find_optimal_threshold(self, thresholds_roc, tpr, fpr):
+        """最適閾値を探索"""
+        print("\n=== 最適閾値の探索 ===")
+        
+        # F1スコアが最大になる閾値
+        thresholds_test = np.arange(0.1, 0.9, 0.05)
+        f1_scores = []
+        
+        for threshold in thresholds_test:
+            y_pred = (self.y_pred_proba >= threshold).astype(int)
+            f1 = f1_score(self.y_true, y_pred, zero_division=0)
+            f1_scores.append(f1)
+        
+        optimal_threshold_f1 = thresholds_test[np.argmax(f1_scores)]
+        max_f1 = np.max(f1_scores)
+        
+        self.optimal_threshold = optimal_threshold_f1
+        
+        y_pred_optimal = (self.y_pred_proba >= optimal_threshold_f1).astype(int)
+        acc_optimal = accuracy_score(self.y_true, y_pred_optimal)
+        prec_optimal = precision_score(self.y_true, y_pred_optimal, zero_division=0)
+        rec_optimal = recall_score(self.y_true, y_pred_optimal, zero_division=0)
+        
+        # 混同行列を計算
+        cm = confusion_matrix(self.y_true, y_pred_optimal)
+        
+        # モデルメトリクスを保存
+        self.model_metrics = {
+            'optimal_threshold': float(optimal_threshold_f1),
+            'accuracy': float(acc_optimal),
+            'precision': float(prec_optimal),
+            'recall': float(rec_optimal),
+            'f1_score': float(max_f1),
+            'roc_auc': float(self.roc_auc),
+            'avg_precision': float(self.avg_precision),
+            'confusion_matrix': cm.tolist(),
+            'true_negatives': int(cm[0, 0]),
+            'false_positives': int(cm[0, 1]),
+            'false_negatives': int(cm[1, 0]),
+            'true_positives': int(cm[1, 1])
+        }
+        
+        print(f"F1スコア最大化:")
+        print(f"  最適閾値: {optimal_threshold_f1:.2f}")
+        print(f"  F1スコア: {max_f1:.4f}")
+        print(f"  Accuracy: {acc_optimal:.4f}")
+        print(f"  Precision: {prec_optimal:.4f}")
+        print(f"  Recall: {rec_optimal:.4f}")
+        print(f"\n混同行列:")
+        print(f"  TN: {cm[0, 0]}, FP: {cm[0, 1]}")
+        print(f"  FN: {cm[1, 0]}, TP: {cm[1, 1]}")
+        
+        # Youden's Index
+        youden_index = tpr - fpr
+        optimal_idx = np.argmax(youden_index)
+        optimal_threshold_youden = thresholds_roc[optimal_idx]
+        
+        print(f"\nYouden's Index:")
+        print(f"  最適閾値: {optimal_threshold_youden:.4f}\n")
+    
     def filter_and_save_candidates(self, df_metrics):
         """候補特徴をフィルタリングして保存"""
         print("=== 候補特徴の選定 ===")
@@ -387,6 +522,22 @@ class FeatureSelector:
             f.write(f"非迎合サンプル: {(self.y == 0).sum()}\n")
             f.write(f"Baseテンプレート: {(self.template_types == 'base').sum()}\n\n")
             
+            # モデル性能指標を追加
+            if self.model_metrics:
+                f.write(f"=== モデル性能 ===\n")
+                f.write(f"ROC AUC: {self.model_metrics.get('roc_auc', 'N/A'):.4f}\n")
+                f.write(f"Average Precision: {self.model_metrics.get('avg_precision', 'N/A'):.4f}\n")
+                f.write(f"最適閾値: {self.model_metrics.get('optimal_threshold', 'N/A'):.2f}\n")
+                f.write(f"Accuracy: {self.model_metrics.get('accuracy', 'N/A'):.4f}\n")
+                f.write(f"Precision: {self.model_metrics.get('precision', 'N/A'):.4f}\n")
+                f.write(f"Recall: {self.model_metrics.get('recall', 'N/A'):.4f}\n")
+                f.write(f"F1 Score: {self.model_metrics.get('f1_score', 'N/A'):.4f}\n")
+                f.write(f"\n混同行列:\n")
+                f.write(f"  TN: {self.model_metrics.get('true_negatives', 'N/A')}, ")
+                f.write(f"FP: {self.model_metrics.get('false_positives', 'N/A')}\n")
+                f.write(f"  FN: {self.model_metrics.get('false_negatives', 'N/A')}, ")
+                f.write(f"TP: {self.model_metrics.get('true_positives', 'N/A')}\n\n")
+            
             f.write(f"=== 抑制候補 (上位10件) ===\n")
             for i, row in df_suppress.head(10).iterrows():
                 f.write(f"{row['Feature']} (ID: {row['Feature_ID']})\n")
@@ -420,7 +571,10 @@ class FeatureSelector:
         # 2. モデル学習とSHAP計算（キャッシュ機能付き）
         self.train_model_and_compute_shap()
         
-        # 3. 指標計算
+        # 3. ROC/PR曲線分析と最適閾値探索
+        self.analyze_roc_pr_curves()
+        
+        # 4. 指標計算
         df_metrics = self.compute_metrics()
         
         # 4. 候補選定と保存
