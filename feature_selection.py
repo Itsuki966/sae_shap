@@ -278,13 +278,14 @@ class FeatureSelector:
             feature_shap = self.shap_values[:, i]
             
             # 1. 基本統計量
-            # 活性化閾値（0より大きい）
+            # 活性化閾値(0より大きい)
             active_syc = feature_vals[mask_syc] > 0
             active_nonsyc = feature_vals[mask_nonsyc] > 0
             active_base = feature_vals[mask_base] > 0
             
             freq_syc = (active_syc.sum() / len(active_syc) * 100) if mask_syc.sum() > 0 else 0
             freq_nonsyc = (active_nonsyc.sum() / len(active_nonsyc) * 100) if mask_nonsyc.sum() > 0 else 0
+            freq_base = (active_base.sum() / len(active_base) * 100) if mask_base.sum() > 0 else 0
             
             mean_intensity_syc = feature_vals[mask_syc].mean() if mask_syc.sum() > 0 else 0
             mean_intensity_nonsyc = feature_vals[mask_nonsyc].mean() if mask_nonsyc.sum() > 0 else 0
@@ -295,6 +296,7 @@ class FeatureSelector:
             consistency = freq_syc / 100.0
             diff_base_syc = mean_intensity_syc - mean_intensity_base
             log_ratio_syc_base = np.log2((mean_intensity_syc + eps) / (mean_intensity_base + eps))
+            freq_diff_base_syc = freq_syc - freq_base
             
             # SHAP相関（特徴量値とSHAP値の相関）
             if len(feature_vals) > 1 and feature_vals.std() > 0:
@@ -305,11 +307,13 @@ class FeatureSelector:
             # 3. スコア算出
             # Suppression Score (抑制): SHAP Correlation > 0 の場合のみ
             if shap_correlation > 0:
+                freq_gain = max(0, freq_diff_base_syc)
                 suppression_score = (
                     specificity * 
                     consistency * 
                     max(0, diff_base_syc) * 
-                    max(0, log_ratio_syc_base)
+                    max(0, log_ratio_syc_base) * 
+                    (freq_gain / 100.0 + 1.0)  # 頻度ボーナス
                 )
             else:
                 suppression_score = 0
@@ -330,6 +334,8 @@ class FeatureSelector:
                 'Feature_ID': int(feature_name.replace('feature_', '')),
                 'Freq Syc (%)': freq_syc,
                 'Freq NonSyc (%)': freq_nonsyc,
+                'Freq Base (%)': freq_base,
+                'Freq Diff Base-Syc': freq_diff_base_syc,
                 'Mean Intensity Syc': mean_intensity_syc,
                 'Mean Intensity NonSyc': mean_intensity_nonsyc,
                 'Mean Intensity Base': mean_intensity_base,
