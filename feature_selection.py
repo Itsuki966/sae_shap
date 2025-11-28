@@ -265,7 +265,7 @@ class FeatureSelector:
         # マスクの作成
         mask_syc = self.y == 1
         mask_nonsyc = self.y == 0
-        mask_base = self.template_types == "base"
+        mask_base = self.template_types == ""
         
         print(f"迎合サンプル: {mask_syc.sum()}")
         print(f"非迎合サンプル: {mask_nonsyc.sum()}")
