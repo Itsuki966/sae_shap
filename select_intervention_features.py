@@ -220,7 +220,7 @@ def select_top_k_features(df: pd.DataFrame, k: int = 50) -> List[int]:
     return top_k['feature_index'].tolist()
 
 
-def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int]):
+def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int], args=None):
     """
     選定結果をCSVファイルに保存
     
@@ -228,6 +228,7 @@ def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int]):
         df: 全候補データ
         top_k_ids: 選定された特徴量IDリスト
         output_dir: 保存先ディレクトリ
+        args: コマンドライン引数（入力ファイル名や閾値などを記録）
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -245,6 +246,15 @@ def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int]):
     summary_path = output_dir / f"selection_summary_{timestamp}.txt"
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write("=== 介入候補特徴量 選定サマリー ===\n\n")
+        
+        # 実行パラメータを記録
+        if args is not None:
+            f.write("--- 実行パラメータ ---\n")
+            f.write(f"入力ファイル: {args.input}\n")
+            f.write(f"選定数: Top-{args.top_k}\n")
+            f.write(f"最小AtPスコア: {args.min_atp}\n")
+            f.write(f"最小Log Ratio: {args.min_log_ratio}\n\n")
+        
         f.write(f"選定数: {len(selected_df)} 特徴量\n\n")
         f.write("--- 統計情報 ---\n")
         f.write(selected_df[['global_mean_atp', 'log_ratio', 'mean_activation_syc', 'mean_activation_base']].describe().to_string())
@@ -386,7 +396,7 @@ def main():
     # Step 5: 結果保存
     print("\n[Step 5] 結果保存...")
     output_dir = Path(args.output_dir)
-    save_results(candidates, output_dir, top_k_ids)
+    save_results(candidates, output_dir, top_k_ids, args)
     
     # Step 6: 可視化
     print("\n[Step 6] 可視化...")
