@@ -65,15 +65,16 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
     for result in data['results']:
         for variation in result['variations']:
             atp_analysis = variation.get('atp_analysis')
-            if atp_analysis is None or 'error' in atp_analysis:
-                continue
-            
+
             # baseテンプレート
             if variation.get('template_type') == '' or variation.get('sycophancy_flag') == 0:
                 total_base_samples += 1
             # 迎合テンプレート
             else:
                 total_sycophancy_samples += 1
+
+            if atp_analysis is None or 'error' in atp_analysis:
+                continue
     
     print(f"Total sycophancy samples (N_syc): {total_sycophancy_samples}")
     print(f"Total base samples (N_base): {total_base_samples}")
