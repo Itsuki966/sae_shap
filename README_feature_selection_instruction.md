@@ -98,52 +98,83 @@ AtP Score = Activation × Gradient
 #### 2.2.1 Mean Activation Syc（迎合時平均活性値）
 
 **定義:**
-迎合サンプル（sycophancy_flag=1）における特徴量の平均活性値。
+全迎合サンプル（sycophancy_flag=1）における特徴量の平均活性値。活性化しなかったサンプルは0として扱います。
 
 **計算式:**
 ```
 Mean Activation Syc = (1/N_syc) × Σ(Activation_i)
 ```
-- `N_syc`: 迎合サンプル数
-- `Activation_i`: 各迎合サンプルでの活性値
+- `N_syc`: 全迎合サンプル数（活性化しなかったサンプルも含む）
+- `Activation_i`: 各迎合サンプルでの活性値（活性化しなかった場合は0）
+
+**重要な計算上の注意:**
+- SAE特徴量はスパースであるため、多くのサンプルで活性値が0になります
+- この平均値は**全サンプル**を母集団とし、活性化しなかったサンプルの寄与を0として含めます
+- 例: 100サンプル中20サンプルのみ活性化（平均活性値5.0）の場合
+  - Mean Activation Syc = (20 × 5.0 + 80 × 0) / 100 = 1.0
 
 **意味:**
-- 迎合的な回答生成時に、その特徴量がどれだけ強く発火しているか
+- 迎合的な回答生成時に、その特徴量が**平均的に**どれだけ強く発火しているか
+- 活性化頻度とその強度の両方を反映した指標
 
 ---
 
 #### 2.2.2 Mean Activation Base（Base時平均活性値）
 
 **定義:**
-Baseテンプレート（template_type="base"）における特徴量の平均活性値。
+全Baseサンプル（template_type="base"）における特徴量の平均活性値。活性化しなかったサンプルは0として扱います。
 
 **計算式:**
 ```
 Mean Activation Base = (1/N_base) × Σ(Activation_j)
 ```
-- `N_base`: Baseサンプル数
-- `Activation_j`: 各Baseサンプルでの活性値
+- `N_base`: 全Baseサンプル数（活性化しなかったサンプルも含む）
+- `Activation_j`: 各Baseサンプルでの活性値（活性化しなかった場合は0）
+
+**重要な計算上の注意:**
+- Mean Activation Sycと同様、全サンプルを母集団とした平均値
+- スパース性により、多くのサンプルで活性値が0になることを考慮
 
 **意味:**
-- 中立的な回答生成時（通常の言語処理）に、その特徴量がどれだけ使われているか
-- 値が大きい → 通常の言語能力に必要な特徴の可能性
+- 中立的な回答生成時（通常の言語処理）に、その特徴量が**平均的に**どれだけ使われているか
+- 値が大きい → 通常の言語能力に頻繁に必要とされる特徴の可能性（介入すると副作用リスク）
+- 値が小さい → 通常時はほとんど使われない特徴（介入の副作用リスク低）
 
 ---
 
 ### 2.3 Log Ratio（迎合特異性指標）
 
 **定義:**
-迎合時とBase時の活性値比の対数。特徴量が迎合に特異的かどうかを示します。
+迎合時とBase時の平均活性値の比の対数。特徴量が迎合に特異的かどうかを示します。
 
 **計算式:**
 ```
 Log Ratio = log₁₀((Mean Activation Syc + ε) / (Mean Activation Base + ε))
 ```
 - `ε = 1e-6`: ゼロ除算防止用の微小値
+- `Mean Activation Syc`: 全迎合サンプルでの平均活性値（活性化しなかった場合は0）
+- `Mean Activation Base`: 全Baseサンプルでの平均活性値（活性化しなかった場合は0）
+
+**なぜ全サンプルベースの平均が重要か:**
+真の「迎合特異性」を測定するには、活性化しなかったサンプルも含めた全体像を把握する必要があります。
+
+**具体例による比較:**
+- 全迎合サンプル数: 100、全Baseサンプル数: 100
+- 特徴Aの迎合時活性化: 20サンプル（活性値平均5.0）、Base時活性化: 5サンプル（活性値平均2.0）
+
+**正しい計算（全サンプルベース）:**
+- Mean Activation Syc = (20 × 5.0) / 100 = 1.0
+- Mean Activation Base = (5 × 2.0) / 100 = 0.1
+- Log Ratio = log₁₀(1.0 / 0.1) = 1.0 → 真に迎合特異的
+
+**誤った計算（活性化したサンプルのみ）:**
+- 迎合時平均 = 5.0、Base時平均 = 2.0
+- Log Ratio = log₁₀(5.0 / 2.0) = 0.40 → 特異性を過小評価
 
 **解釈:**
 | Log Ratio | 活性値比 | 意味 |
 |-----------|----------|------|
+| < 0 | < 1倍 | Base時により強く発火（迎合時は抑制）|
 | 0.0 | 1倍 | 迎合時もBase時も同程度 |
 | 0.3 | 2倍 | 迎合時に2倍強く発火 |
 | 0.5 | 3.16倍 | 迎合時に約3倍強く発火（推奨閾値） |
@@ -153,6 +184,7 @@ Log Ratio = log₁₀((Mean Activation Syc + ε) / (Mean Activation Base + ε))
 **重要性:**
 - **Log Ratio が高い** → 迎合特異的 → 介入しても言語能力への副作用が少ない
 - **Log Ratio が低い** → 通常時も使用 → 介入すると言語能力が崩壊する恐れ
+- **Log Ratio が負** → 通常時により使用 → 介入すると言語能力が大幅に低下
 
 ---
 
@@ -203,20 +235,25 @@ global_mean_atp > 1e-4  （デフォルト値）
 |---------|---------|------|
 | `feature_index` | int | 特徴量ID |
 | `global_mean_atp` | float | 全体平均AtPスコア（因果効果） |
-| `mean_activation_syc` | float | 迎合時平均活性値 |
-| `mean_activation_base` | float | Base時平均活性値 |
+| `conditional_mean_atp` | float | 活性化した時のみの平均AtPスコア（参考値） |
+| `mean_activation_syc` | float | 迎合時平均活性値（全サンプルベース） |
+| `mean_activation_base` | float | Base時平均活性値（全サンプルベース） |
 | `log_ratio` | float | 迎合特異性指標 |
-| `num_samples_active` | int | 活性化したサンプル数 |
-| `num_samples_total` | int | 総サンプル数 |
+| `num_samples_active_syc` | int | 迎合時に活性化したサンプル数 |
+| `num_samples_active_base` | int | Base時に活性化したサンプル数 |
+| `num_samples_total_syc` | int | 総迎合サンプル数 |
+| `num_samples_total_base` | int | 総Baseサンプル数 |
+| `activation_rate_syc` | float | 迎合時活性化率 |
+| `activation_rate_base` | float | Base時活性化率 |
 
 **ソート順**: `global_mean_atp` 降順
 
 **サンプル:**
 ```csv
-feature_index,global_mean_atp,mean_activation_syc,mean_activation_base,log_ratio,num_samples_active,num_samples_total
-1234,5.234,2.456,0.123,1.301,87,100
-5678,4.891,3.012,0.089,1.529,92,100
-9012,3.567,1.890,0.234,0.907,76,100
+feature_index,global_mean_atp,conditional_mean_atp,mean_activation_syc,mean_activation_base,log_ratio,num_samples_active_syc,num_samples_active_base,num_samples_total_syc,num_samples_total_base,activation_rate_syc,activation_rate_base
+1234,5.234,6.012,1.456,0.123,1.073,87,12,100,100,0.87,0.12
+5678,4.891,5.321,2.012,0.089,1.354,92,8,100,100,0.92,0.08
+9012,3.567,4.693,0.890,0.134,0.822,76,15,100,100,0.76,0.15
 ...
 ```
 
@@ -354,11 +391,25 @@ python select_intervention_features.py \
 **解決策:**
 「迎合時」には強く働くが、「平時（Base）」にはあまり働かない**特異的な特徴量**のみを選定する。
 
-**例:**
-- **特徴A**: AtP=5.0, Base活性=0.1, 迎合活性=3.0 → Log Ratio=1.48 ✓ 介入候補
-- **特徴B**: AtP=5.0, Base活性=2.5, 迎合活性=3.0 → Log Ratio=0.08 ✗ 言語能力に必要
+**具体例（全サンプルベースで正しく計算）:**
 
-特徴AとBは同じAtPスコアだが、特徴Bは通常時も使われるため、介入すると言語能力が崩壊する恐れがあります。
+全サンプル数: 迎合100、Base100
+
+- **特徴A**: AtP=5.0
+  - 迎合時: 20サンプルで活性化（平均5.0） → Mean Activation Syc = 1.0
+  - Base時: 2サンプルで活性化（平均5.0） → Mean Activation Base = 0.1
+  - Log Ratio = log₁₀(1.0 / 0.1) = 1.0 ✓ **迎合特異的 → 介入候補**
+
+- **特徴B**: AtP=5.0
+  - 迎合時: 80サンプルで活性化（平均3.1） → Mean Activation Syc = 2.5
+  - Base時: 80サンプルで活性化（平均3.0） → Mean Activation Base = 2.4
+  - Log Ratio = log₁₀(2.5 / 2.4) = 0.02 ✗ **通常時も使用 → 介入すると言語崩壊**
+
+特徴AとBは同じAtPスコアですが：
+- **特徴A**: 迎合時のみ選択的に活性化（活性化率: 20% vs 2%）→ 安全に介入可能
+- **特徴B**: 常時活性化（活性化率: 80% vs 80%）→ 介入すると言語能力が崩壊
+
+このように、全サンプルベースでの平均活性値を用いることで、真の「特異性」を正しく評価できます。
 
 ---
 
