@@ -31,14 +31,15 @@ plt.rcParams['font.size'] = 10
 sns.set_style("whitegrid")
 
 
-def load_atp_data(filepath: str) -> pd.DataFrame:
+def load_atp_data(filepath: str, token_position: str = 'prompt_last_token') -> pd.DataFrame:
     """
-    AtP計算結果のJSONファイルを読み込み、DataFrameに変換する
+    combined_feedback_data.jsonを読み込み、DataFrameに変換する
     
-    Notebook実装に合わせた計算方法:
-        1. 全迎合サンプル数（エラーなし）をカウント
-        2. 各特徴量のAtPスコア総和を計算
-        3. Global Mean AtP = 総和 / 全迎合サンプル数
+    計算方法:
+        1. 全迎合サンプル数と全baseサンプル数をカウント
+        2. sae_activationsから活性値を取得（Base時・迎合時の両方）
+        3. atp_analysisからAtPスコアを取得（迎合時のみ）
+        4. Global Mean AtP = 総和 / 全迎合サンプル数
            （活性化しなかった場合は寄与0として扱う）
     
     JSONの構造:
@@ -46,11 +47,12 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
           - variations: 各テンプレートバリエーション
             - template_type: "base" または迎合誘発テンプレート
             - sycophancy_flag: 0 (base) または 1 (迎合)
-            - atp_analysis: AtPスコアと特徴量情報
-              - top_features: [{id, score, activation, gradient}, ...]
+            - sae_activations: {token_position: {feature_id: activation}}
+            - atp_analysis: AtPスコアと特徴量情報（迎合時のみ）
     
     Args:
-        filepath: AtP結果のJSONファイルパス
+        filepath: combined_feedback_data.jsonのパス
+        token_position: 使用するトークン位置（デフォルト: 'prompt_last_token'）
     
     Returns:
         pd.DataFrame: 特徴量ごとの統計情報を含むDataFrame
@@ -58,24 +60,30 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
     with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Step 1: 全迎合サンプル数と全baseサンプル数をカウント（エラーがないもののみ）
+    # Step 1: 全迎合サンプル数と全baseサンプル数をカウント
     total_sycophancy_samples = 0
     total_base_samples = 0
     
     for result in data['results']:
         for variation in result['variations']:
-            atp_analysis = variation.get('atp_analysis')
-
-            # baseテンプレート
-            if variation.get('template_type') == '' or variation.get('sycophancy_flag') == 0:
-                total_base_samples += 1
-            # 迎合テンプレート
-            else:
-                total_sycophancy_samples += 1
-
-            if atp_analysis is None or 'error' in atp_analysis:
+            # sae_activationsの存在確認
+            if 'sae_activations' not in variation:
                 continue
+            if token_position not in variation['sae_activations']:
+                continue
+            
+            template_type = variation.get('template_type', '')
+            is_base = (template_type == '' or template_type == 'base' or variation.get('sycophancy_flag') == 0)
+            
+            if is_base:
+                total_base_samples += 1
+            else:
+                # 迎合時はatp_analysisも必要
+                atp_analysis = variation.get('atp_analysis')
+                if atp_analysis is not None and 'error' not in atp_analysis:
+                    total_sycophancy_samples += 1
     
+    print(f"Token position: {token_position}")
     print(f"Total sycophancy samples (N_syc): {total_sycophancy_samples}")
     print(f"Total base samples (N_base): {total_base_samples}")
     
@@ -89,17 +97,22 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
     # 全サンプルを走査
     for result in data['results']:
         for variation in result['variations']:
-            atp_analysis = variation.get('atp_analysis')
-            if atp_analysis is None or 'error' in atp_analysis:
+            # sae_activationsの存在確認
+            if 'sae_activations' not in variation:
+                continue
+            if token_position not in variation['sae_activations']:
                 continue
             
             template_type = variation.get('template_type', '')
-            is_base = (template_type == '' or variation.get('sycophancy_flag') == 0)
+            is_base = (template_type == '' or template_type == 'base' or variation.get('sycophancy_flag') == 0)
             
-            if 'top_features' in atp_analysis:
-                for feature in atp_analysis['top_features']:
-                    feature_id = str(feature['id'])
-                    activation = feature.get('activation', 0.0)
+            # sae_activationsから活性値を取得（Base時・迎合時共通）
+            activations_dict = variation['sae_activations'][token_position]
+            
+            # Base時
+            if is_base:
+                for feature_id_str, activation in activations_dict.items():
+                    feature_id = str(feature_id_str)
                     
                     # 初期化
                     if feature_id not in feature_atp_sum:
@@ -109,21 +122,48 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
                         feature_activation_sum_syc[feature_id] = 0.0
                         feature_activation_sum_base[feature_id] = 0.0
                     
-                    # Baseサンプル
-                    if is_base:
-                        feature_activation_sum_base[feature_id] += activation
-                        if activation > 0:
-                            feature_activation_count_base[feature_id] += 1
+                    feature_activation_sum_base[feature_id] += activation
+                    if activation > 0:
+                        feature_activation_count_base[feature_id] += 1
+            
+            # 迎合時: sae_activationsから活性値 + atp_analysisからAtPスコア
+            else:
+                atp_analysis = variation.get('atp_analysis')
+                if atp_analysis is None or 'error' in atp_analysis:
+                    continue
+                
+                # 活性値をsae_activationsから取得
+                for feature_id_str, activation in activations_dict.items():
+                    feature_id = str(feature_id_str)
                     
-                    # 迎合サンプル
-                    else:
+                    # 初期化
+                    if feature_id not in feature_atp_sum:
+                        feature_atp_sum[feature_id] = 0.0
+                        feature_activation_count_syc[feature_id] = 0
+                        feature_activation_count_base[feature_id] = 0
+                        feature_activation_sum_syc[feature_id] = 0.0
+                        feature_activation_sum_base[feature_id] = 0.0
+                    
+                    feature_activation_sum_syc[feature_id] += activation
+                    if activation > 0:
+                        feature_activation_count_syc[feature_id] += 1
+                
+                # AtPスコアをatp_analysisから取得
+                if 'top_features' in atp_analysis:
+                    for feature in atp_analysis['top_features']:
+                        feature_id = str(feature['id'])
                         atp_score = feature.get('score')
+                        
+                        # 初期化（活性値側で初期化済みの可能性が高いが念のため）
+                        if feature_id not in feature_atp_sum:
+                            feature_atp_sum[feature_id] = 0.0
+                            feature_activation_count_syc[feature_id] = 0
+                            feature_activation_count_base[feature_id] = 0
+                            feature_activation_sum_syc[feature_id] = 0.0
+                            feature_activation_sum_base[feature_id] = 0.0
+                        
                         if atp_score is not None:
                             feature_atp_sum[feature_id] += atp_score
-                        
-                        feature_activation_sum_syc[feature_id] += activation
-                        if activation > 0:
-                            feature_activation_count_syc[feature_id] += 1
     
     # Step 3: Global Mean Attribution スコアと平均活性値を計算
     results = []
@@ -344,8 +384,14 @@ def main():
     parser.add_argument(
         '--input',
         type=str,
-        required=True,
-        help='AtP計算結果のJSONファイルパス'
+        default='feedback_results/combined_feedback_data.json',
+        help='combined_feedback_data.jsonのパス（デフォルト: feedback_results/combined_feedback_data.json）'
+    )
+    parser.add_argument(
+        '--token_position',
+        type=str,
+        default='prompt_last_token',
+        help='使用するトークン位置（デフォルト: prompt_last_token）'
     )
     parser.add_argument(
         '--top_k',
@@ -378,6 +424,7 @@ def main():
     print("介入候補特徴量 選定プログラム")
     print("=" * 60)
     print(f"入力ファイル: {args.input}")
+    print(f"トークン位置: {args.token_position}")
     print(f"選定数: Top-{args.top_k}")
     print(f"最小AtPスコア: {args.min_atp}")
     print(f"最小Log Ratio: {args.min_log_ratio}")
@@ -385,7 +432,7 @@ def main():
     
     # Step 1: データ読み込み
     print("\n[Step 1] データ読み込み...")
-    df = load_atp_data(args.input)
+    df = load_atp_data(args.input, token_position=args.token_position)
     print(f"✓ 全特徴量数: {len(df)}")
     
     # Step 2: Log Ratio計算
