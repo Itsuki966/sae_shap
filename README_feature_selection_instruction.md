@@ -149,11 +149,12 @@ Mean Activation Base = (1/N_base) × Σ(Activation_j)
 
 **計算式:**
 ```
-Log Ratio = log₁₀((Mean Activation Syc + ε) / (Mean Activation Base + ε))
+Log Ratio = log₂((Mean Activation Syc + ε) / (Mean Activation Base + ε))
 ```
 - `ε = 1e-6`: ゼロ除算防止用の微小値
 - `Mean Activation Syc`: 全迎合サンプルでの平均活性値（活性化しなかった場合は0）
 - `Mean Activation Base`: 全Baseサンプルでの平均活性値（活性化しなかった場合は0）
+- **log₂を使用**: 機械学習の標準で、fold-change分析と一貫性がある
 
 **なぜ全サンプルベースの平均が重要か:**
 真の「迎合特異性」を測定するには、活性化しなかったサンプルも含めた全体像を把握する必要があります。
@@ -165,21 +166,22 @@ Log Ratio = log₁₀((Mean Activation Syc + ε) / (Mean Activation Base + ε))
 **正しい計算（全サンプルベース）:**
 - Mean Activation Syc = (20 × 5.0) / 100 = 1.0
 - Mean Activation Base = (5 × 2.0) / 100 = 0.1
-- Log Ratio = log₁₀(1.0 / 0.1) = 1.0 → 真に迎合特異的
+- Log Ratio = log₂(1.0 / 0.1) = 3.32 → 真に迎合特異的（10倍の変化）
 
 **誤った計算（活性化したサンプルのみ）:**
 - 迎合時平均 = 5.0、Base時平均 = 2.0
-- Log Ratio = log₁₀(5.0 / 2.0) = 0.40 → 特異性を過小評価
+- Log Ratio = log₂(5.0 / 2.0) = 1.32 → 特異性を過小評価
 
 **解釈:**
-| Log Ratio | 活性値比 | 意味 |
-|-----------|----------|------|
+| Log Ratio (log₂) | 活性値比 | 意味 |
+|-----------------|----------|------|
 | < 0 | < 1倍 | Base時により強く発火（迎合時は抑制）|
 | 0.0 | 1倍 | 迎合時もBase時も同程度 |
-| 0.3 | 2倍 | 迎合時に2倍強く発火 |
-| 0.5 | 3.16倍 | 迎合時に約3倍強く発火（推奨閾値） |
-| 0.7 | 5倍 | 迎合時に5倍強く発火 |
-| 1.0 | 10倍 | 迎合時に10倍強く発火 |
+| 0.5 | 1.41倍 | 迎合時にやや強く発火 |
+| 1.0 | 2倍 | 迎合時に2倍強く発火（推奨閾値） |
+| 1.5 | 2.83倍 | 迎合時に約3倍強く発火 |
+| 2.0 | 4倍 | 迎合時に4倍強く発火 |
+| 3.0 | 8倍 | 迎合時に8倍強く発火 |
 
 **重要性:**
 - **Log Ratio が高い** → 迎合特異的 → 介入しても言語能力への副作用が少ない
@@ -202,10 +204,10 @@ global_mean_atp > 0
 
 #### 条件2: High Specificity（高い迎合特異性）
 ```
-log_ratio > 0.5  （デフォルト値）
+log_ratio > 1.0  （デフォルト値）
 ```
 - **理由**: 通常の言語処理で使われる特徴を消すと、言語能力が崩壊する
-- **推奨値**: 0.5（約3倍以上の特異性）
+- **推奨値**: 1.0（2倍以上の特異性）
 
 #### 条件3: Minimum Impact（最小影響力）
 ```
@@ -324,14 +326,14 @@ python select_intervention_features.py \
   --input atp_calculated_results/atp_results_gemma-2-9b-it.json \
   --top_k 30 \
   --min_atp 5e-4 \
-  --min_log_ratio 0.7
+  --min_log_ratio 2.0
 
 # より緩い選定（候補を多く）
 python select_intervention_features.py \
   --input atp_calculated_results/atp_results_gemma-2-9b-it.json \
   --top_k 100 \
   --min_atp 1e-5 \
-  --min_log_ratio 0.3
+  --min_log_ratio 0.5
 ```
 
 ### コマンドライン引数
@@ -341,7 +343,7 @@ python select_intervention_features.py \
 | `--input` | (必須) | AtP結果のJSONファイルパス |
 | `--top_k` | 50 | 選定する上位特徴量数 |
 | `--min_atp` | 1e-4 | 最小AtPスコア閾値 |
-| `--min_log_ratio` | 0.5 | 最小Log Ratio閾値 |
+| `--min_log_ratio` | 1.0 | 最小Log Ratio閾値（1.0 = 2倍の特異性） |
 | `--output_dir` | results/selection_results | 結果の保存先ディレクトリ |
 
 ---
@@ -398,12 +400,12 @@ python select_intervention_features.py \
 - **特徴A**: AtP=5.0
   - 迎合時: 20サンプルで活性化（平均5.0） → Mean Activation Syc = 1.0
   - Base時: 2サンプルで活性化（平均5.0） → Mean Activation Base = 0.1
-  - Log Ratio = log₁₀(1.0 / 0.1) = 1.0 ✓ **迎合特異的 → 介入候補**
+  - Log Ratio = log₂(1.0 / 0.1) = 3.32 ✓ **迎合特異的（10倍） → 介入候補**
 
 - **特徴B**: AtP=5.0
   - 迎合時: 80サンプルで活性化（平均3.1） → Mean Activation Syc = 2.5
   - Base時: 80サンプルで活性化（平均3.0） → Mean Activation Base = 2.4
-  - Log Ratio = log₁₀(2.5 / 2.4) = 0.02 ✗ **通常時も使用 → 介入すると言語崩壊**
+  - Log Ratio = log₂(2.5 / 2.4) = 0.06 ✗ **通常時も使用 → 介入すると言語崩壊**
 
 特徴AとBは同じAtPスコアですが：
 - **特徴A**: 迎合時のみ選択的に活性化（活性化率: 20% vs 2%）→ 安全に介入可能
@@ -440,9 +442,10 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 ### 8.1 パラメータ調整のガイドライン
 
 **`min_log_ratio` の設定:**
-- **0.3**: 緩い（約2倍の特異性）→ 候補が多い、副作用リスク中
-- **0.5**: 推奨（約3倍の特異性）→ バランス良好
-- **0.7**: 厳格（約5倍の特異性）→ 候補が少ない、副作用リスク低
+- **0.5**: 緩い（約1.4倍の特異性）→ 候補が多い、副作用リスク中
+- **1.0**: 推奨（2倍の特異性）→ バランス良好
+- **1.5**: やや厳格（約3倍の特異性）→ 安全性重視
+- **2.0**: 厳格（4倍の特異性）→ 候補が少ない、副作用リスク低
 
 **`top_k` の設定:**
 - **小（20-30）**: 最も効果的な特徴のみ → 保守的介入
@@ -454,7 +457,7 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 ### 8.2 結果の検証方法
 
 1. **散布図の確認**: 選定された特徴が右上に集中しているか
-2. **Log Ratioの分布**: 十分に高い特異性（>0.5）を持つか
+2. **Log Ratioの分布**: 十分に高い特異性（>1.0）を持つか
 3. **Base活性値の確認**: 通常時の活性値が低いか（副作用リスク評価）
 
 ---
