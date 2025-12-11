@@ -274,14 +274,15 @@ def select_top_k_features(df: pd.DataFrame, k: int = 50) -> List[int]:
     return top_k['feature_index'].tolist()
 
 
-def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int], args=None):
+def save_results(df: pd.DataFrame, df_all: pd.DataFrame, output_dir: Path, top_k_ids: List[int], args=None):
     """
     選定結果をCSVファイルに保存
     
     Args:
-        df: 全候補データ
-        top_k_ids: 選定された特徴量IDリスト
+        df: フィルタリング後の候補データ
+        df_all: 全特徴量のデータ（統計情報用）
         output_dir: 保存先ディレクトリ
+        top_k_ids: 選定された特徴量IDリスト
         args: コマンドライン引数（入力ファイル名や閾値などを記録）
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -305,12 +306,41 @@ def save_results(df: pd.DataFrame, output_dir: Path, top_k_ids: List[int], args=
         if args is not None:
             f.write("--- 実行パラメータ ---\n")
             f.write(f"入力ファイル: {args.input}\n")
+            f.write(f"トークン位置: {args.token_position}\n")
             f.write(f"選定数: Top-{args.top_k}\n")
             f.write(f"最小AtPスコア: {args.min_atp}\n")
             f.write(f"最小Log Ratio: {args.min_log_ratio}\n\n")
         
+        # 全特徴の統計情報
+        f.write("=" * 60 + "\n")
+        f.write("--- 全特徴量の統計情報 ---\n")
+        f.write(f"総特徴量数: {len(df_all)}\n\n")
+        
+        # 主要指標の統計
+        f.write("\n主要指標の統計量:\n")
+        stats_columns = ['global_mean_atp', 'log_ratio', 'mean_activation_syc', 'mean_activation_base', 
+                        'activation_rate_syc', 'activation_rate_base']
+        f.write(df_all[stats_columns].describe().to_string())
+        
+        # Global Mean AtPの分布
+        f.write("\n\nGlobal Mean AtPの分布:\n")
+        f.write(f"  正の値: {(df_all['global_mean_atp'] > 0).sum()} 特徴 ({(df_all['global_mean_atp'] > 0).sum() / len(df_all) * 100:.1f}%)\n")
+        f.write(f"  負の値: {(df_all['global_mean_atp'] < 0).sum()} 特徴 ({(df_all['global_mean_atp'] < 0).sum() / len(df_all) * 100:.1f}%)\n")
+        f.write(f"  ゼロ: {(df_all['global_mean_atp'] == 0).sum()} 特徴\n")
+        
+        # Log Ratioの分布
+        f.write("\nLog Ratioの分布:\n")
+        f.write(f"  > 2.0 (4倍): {(df_all['log_ratio'] > 2.0).sum()} 特徴\n")
+        f.write(f"  > 1.0 (2倍): {(df_all['log_ratio'] > 1.0).sum()} 特徴\n")
+        f.write(f"  > 0.5 (1.4倍): {(df_all['log_ratio'] > 0.5).sum()} 特徴\n")
+        f.write(f"  > 0.0: {(df_all['log_ratio'] > 0.0).sum()} 特徴\n")
+        f.write(f"  < 0.0 (Base時により活性化): {(df_all['log_ratio'] < 0.0).sum()} 特徴\n")
+        
+        f.write("\n" + "=" * 60 + "\n\n")
+        
+        # 選定された特徴の統計情報
+        f.write("--- 選定された特徴量の統計情報 ---\n")
         f.write(f"選定数: {len(selected_df)} 特徴量\n\n")
-        f.write("--- 統計情報 ---\n")
         f.write(selected_df[['global_mean_atp', 'log_ratio', 'mean_activation_syc', 'mean_activation_base']].describe().to_string())
         f.write("\n\n--- 上位10特徴量 ---\n")
         f.write(selected_df.head(10).to_string())
@@ -457,7 +487,7 @@ def main():
     # Step 5: 結果保存
     print("\n[Step 5] 結果保存...")
     output_dir = Path(args.output_dir)
-    save_results(candidates, output_dir, top_k_ids, args)
+    save_results(candidates, df, output_dir, top_k_ids, args)
     
     # Step 6: 可視化
     print("\n[Step 6] 可視化...")
