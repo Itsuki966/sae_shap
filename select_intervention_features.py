@@ -58,84 +58,85 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
     with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Step 1: 全迎合サンプル数をカウント（エラーがないもののみ）
+    # Step 1: 全迎合サンプル数と全baseサンプル数をカウント（エラーがないもののみ）
     total_sycophancy_samples = 0
+    total_base_samples = 0
     
     for result in data['results']:
         for variation in result['variations']:
-            # baseテンプレートまたはsycophancy_flag==0の場合はスキップ
-            if variation.get('template_type') == '' or variation.get('sycophancy_flag') == 0:
-                continue
-            
             atp_analysis = variation.get('atp_analysis')
             if atp_analysis is None or 'error' in atp_analysis:
                 continue
             
-            total_sycophancy_samples += 1
+            # baseテンプレート
+            if variation.get('template_type') == '' or variation.get('sycophancy_flag') == 0:
+                total_base_samples += 1
+            # 迎合テンプレート
+            else:
+                total_sycophancy_samples += 1
     
     print(f"Total sycophancy samples (N_syc): {total_sycophancy_samples}")
+    print(f"Total base samples (N_base): {total_base_samples}")
     
-    # Step 2: 各特徴量のAtPスコア総和を計算（活性化しなかった場合は0として扱う）
+    # Step 2: 各特徴量のAtPスコア総和と活性値総和を計算（活性化しなかった場合は0として扱う）
     feature_atp_sum = {}
-    feature_activation_count = {}  # 参考用：実際に活性化した回数
-    feature_activations_syc = {}  # 迎合時の活性値リスト
-    feature_activations_base = {}  # base時の活性値リスト
+    feature_activation_count_syc = {}  # 参考用：迎合時に実際に活性化した回数
+    feature_activation_count_base = {}  # 参考用：base時に実際に活性化した回数
+    feature_activation_sum_syc = {}  # 迎合時の活性値総和（全サンプル）
+    feature_activation_sum_base = {}  # base時の活性値総和（全サンプル）
     
-    # 全サンプルを走査してbase活性値を収集
+    # 全サンプルを走査
     for result in data['results']:
-        base_activations = {}  # 各質問のbaseテンプレートの活性値
-        
         for variation in result['variations']:
+            atp_analysis = variation.get('atp_analysis')
+            if atp_analysis is None or 'error' in atp_analysis:
+                continue
+            
             template_type = variation.get('template_type', '')
+            is_base = (template_type == '' or variation.get('sycophancy_flag') == 0)
             
-            # Baseテンプレートの活性値を記録
-            if template_type == '' or variation.get('sycophancy_flag') == 0:
-                if 'atp_analysis' in variation and 'top_features' in variation.get('atp_analysis', {}):
-                    for feature in variation['atp_analysis']['top_features']:
-                        feature_id = str(feature['id'])
-                        base_activations[feature_id] = feature.get('activation', 0.0)
-            
-            # 迎合サンプルのAtPスコアと活性値を記録
-            elif variation.get('sycophancy_flag') == 1:
-                atp_analysis = variation.get('atp_analysis')
-                if atp_analysis is None or 'error' in atp_analysis:
-                    continue
-                
-                if 'top_features' in atp_analysis:
-                    for feature in atp_analysis['top_features']:
-                        feature_id = str(feature['id'])
+            if 'top_features' in atp_analysis:
+                for feature in atp_analysis['top_features']:
+                    feature_id = str(feature['id'])
+                    activation = feature.get('activation', 0.0)
+                    
+                    # 初期化
+                    if feature_id not in feature_atp_sum:
+                        feature_atp_sum[feature_id] = 0.0
+                        feature_activation_count_syc[feature_id] = 0
+                        feature_activation_count_base[feature_id] = 0
+                        feature_activation_sum_syc[feature_id] = 0.0
+                        feature_activation_sum_base[feature_id] = 0.0
+                    
+                    # Baseサンプル
+                    if is_base:
+                        feature_activation_sum_base[feature_id] += activation
+                        if activation > 0:
+                            feature_activation_count_base[feature_id] += 1
+                    
+                    # 迎合サンプル
+                    else:
                         atp_score = feature.get('score')
-                        activation = feature.get('activation', 0.0)
-                        
-                        if feature_id is not None and atp_score is not None:
-                            if feature_id not in feature_atp_sum:
-                                feature_atp_sum[feature_id] = 0.0
-                                feature_activation_count[feature_id] = 0
-                                feature_activations_syc[feature_id] = []
-                                feature_activations_base[feature_id] = []
-                            
+                        if atp_score is not None:
                             feature_atp_sum[feature_id] += atp_score
-                            feature_activation_count[feature_id] += 1
-                            feature_activations_syc[feature_id].append(activation)
-                            
-                            # 対応するbase活性値を記録（なければ0）
-                            base_act = base_activations.get(feature_id, 0.0)
-                            feature_activations_base[feature_id].append(base_act)
+                        
+                        feature_activation_sum_syc[feature_id] += activation
+                        if activation > 0:
+                            feature_activation_count_syc[feature_id] += 1
     
-    # Step 3: Global Mean Attribution スコアを計算
+    # Step 3: Global Mean Attribution スコアと平均活性値を計算
     results = []
     for feature_id, total_score in feature_atp_sum.items():
-        # Global Mean: 全迎合サンプル数で割る（非活性時は0として扱う）
+        # Global Mean AtP: 全迎合サンプル数で割る（非活性時は0として扱う）
         global_mean_atp = total_score / total_sycophancy_samples
         
-        # 参考値: 活性化した時のみの平均（Conditional Mean）
-        conditional_mean_atp = total_score / feature_activation_count[feature_id]
+        # 参考値: 活性化した時のみの平均AtP（Conditional Mean）
+        count_active = feature_activation_count_syc[feature_id]
+        conditional_mean_atp = total_score / count_active if count_active > 0 else 0.0
         
-        # 平均活性値
-        activations_syc = np.array(feature_activations_syc[feature_id])
-        activations_base = np.array(feature_activations_base[feature_id])
-        mean_activation_syc = np.mean(activations_syc)
-        mean_activation_base = np.mean(activations_base)
+        # 全サンプルベースでの平均活性値（活性化しなかったサンプルは0として扱う）
+        mean_activation_syc = feature_activation_sum_syc[feature_id] / total_sycophancy_samples
+        mean_activation_base = feature_activation_sum_base[feature_id] / total_base_samples
         
         results.append({
             'feature_index': int(feature_id),
@@ -143,9 +144,12 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
             'conditional_mean_atp': conditional_mean_atp,
             'mean_activation_syc': mean_activation_syc,
             'mean_activation_base': mean_activation_base,
-            'num_samples_active': feature_activation_count[feature_id],
-            'num_samples_total': total_sycophancy_samples,
-            'activation_rate': feature_activation_count[feature_id] / total_sycophancy_samples
+            'num_samples_active_syc': feature_activation_count_syc[feature_id],
+            'num_samples_active_base': feature_activation_count_base[feature_id],
+            'num_samples_total_syc': total_sycophancy_samples,
+            'num_samples_total_base': total_base_samples,
+            'activation_rate_syc': feature_activation_count_syc[feature_id] / total_sycophancy_samples,
+            'activation_rate_base': feature_activation_count_base[feature_id] / total_base_samples
         })
     
     df = pd.DataFrame(results)
@@ -157,6 +161,15 @@ def load_atp_data(filepath: str) -> pd.DataFrame:
 def calculate_log_ratio(df: pd.DataFrame, epsilon: float = 1e-6) -> pd.DataFrame:
     """
     迎合特異性を示すLog Ratioを計算する
+    
+    Log Ratio = log10((mean_activation_syc + ε) / (mean_activation_base + ε))
+    
+    ここで、mean_activation_syc と mean_activation_base は
+    全サンプルベースでの平均活性値（活性化しなかったサンプルは0として扱う）。
+    
+    正の値: 迎合時に特異的に活性化
+    0付近: base時と同程度
+    負の値: base時により活性化（迎合時は抑制）
     
     Args:
         df: 特徴量統計データ
