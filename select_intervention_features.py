@@ -26,10 +26,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import japanize_matplotlib
 
-# 日本語フォント設定（macOS）
-plt.rcParams['font.family'] = 'Hiragino Sans'
-plt.rcParams['font.size'] = 10
+# seabornのスタイル設定を先に実行
 sns.set_style("whitegrid")
+
+# 日本語フォント設定（seabornの後に設定して上書き）
+plt.rcParams['font.sans-serif'] = ['Hiragino Sans', 'Hiragino Kaku Gothic Pro', 'Yu Gothic', 'Meirio', 'DejaVu Sans']
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['axes.unicode_minus'] = False  # マイナス記号の文字化け対策
+plt.rcParams['font.size'] = 10
 
 
 def load_atp_data(filepath: str, token_position: str = 'prompt_last_token') -> pd.DataFrame:
@@ -364,6 +368,11 @@ def visualize_selection(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # 図作成時に明示的にフォント設定
+    plt.rcParams['font.sans-serif'] = ['Hiragino Sans', 'Hiragino Kaku Gothic Pro', 'Yu Gothic', 'Meirio', 'DejaVu Sans']
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['axes.unicode_minus'] = False
+    
     fig, ax = plt.subplots(figsize=(10, 8))
     
     # 全特徴量（グレー）
@@ -405,6 +414,52 @@ def visualize_selection(
     plt.close()
     
     print(f"✓ 可視化を保存: {fig_path}")
+    
+    # ズームイン版（log ratio: -5~5, global mean atp: -0.006~0.006）
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    
+    # 全特徴量（グレー）
+    ax2.scatter(
+        df_all['log_ratio'],
+        df_all['global_mean_atp'],
+        c='gray',
+        alpha=0.3,
+        s=20,
+        label='All Features'
+    )
+    
+    # 選定された特徴量（赤）
+    ax2.scatter(
+        df_selected['log_ratio'],
+        df_selected['global_mean_atp'],
+        c='red',
+        alpha=0.8,
+        s=50,
+        label=f'Selected (n={len(df_selected)})',
+        edgecolors='darkred',
+        linewidths=1
+    )
+    
+    # 閾値線
+    ax2.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+    ax2.axvline(x=1.0, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
+    
+    # 軸の範囲を制限
+    ax2.set_xlim(-5, 5)
+    ax2.set_ylim(-0.006, 0.006)
+    
+    ax2.set_xlabel('Log Ratio (迎合特異性)', fontsize=12)
+    ax2.set_ylabel('Global Mean AtP (因果効果)', fontsize=12)
+    ax2.set_title('介入候補特徴量の選定結果（拡大表示）', fontsize=14, fontweight='bold')
+    ax2.legend(loc='upper right')
+    ax2.grid(True, alpha=0.3)
+    
+    fig_path_zoom = output_dir / f"intervention_selection_{timestamp}_zoomed.png"
+    plt.tight_layout()
+    plt.savefig(fig_path_zoom, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"✓ 拡大表示を保存: {fig_path_zoom}")
 
 
 def main():
