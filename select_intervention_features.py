@@ -162,7 +162,7 @@ def calculate_log_ratio(df: pd.DataFrame, epsilon: float = 1e-6) -> pd.DataFrame
     """
     迎合特異性を示すLog Ratioを計算する
     
-    Log Ratio = log10((mean_activation_syc + ε) / (mean_activation_base + ε))
+    Log Ratio = log2((mean_activation_syc + ε) / (mean_activation_base + ε))
     
     ここで、mean_activation_syc と mean_activation_base は
     全サンプルベースでの平均活性値（活性化しなかったサンプルは0として扱う）。
@@ -179,7 +179,7 @@ def calculate_log_ratio(df: pd.DataFrame, epsilon: float = 1e-6) -> pd.DataFrame
         pd.DataFrame: log_ratio列が追加されたDataFrame
     """
     df = df.copy()
-    df['log_ratio'] = np.log10(
+    df['log_ratio'] = np.log2(
         (df['mean_activation_syc'] + epsilon) / (df['mean_activation_base'] + epsilon)
     )
     return df
@@ -188,7 +188,7 @@ def calculate_log_ratio(df: pd.DataFrame, epsilon: float = 1e-6) -> pd.DataFrame
 def filter_candidates(
     df: pd.DataFrame,
     min_atp_impact: float = 1e-4,
-    min_log_ratio: float = 0.5
+    min_log_ratio: float = 1.0
 ) -> pd.DataFrame:
     """
     介入候補の複合フィルタリング
@@ -201,7 +201,7 @@ def filter_candidates(
     Args:
         df: 特徴量データ
         min_atp_impact: 最小AtPスコア閾値
-        min_log_ratio: 最小Log Ratio閾値
+        min_log_ratio: 最小Log Ratio閾値（デフォルト: 1.0 = 2倍の特異性）
     
     Returns:
         pd.DataFrame: フィルタリング後のDataFrame
@@ -318,7 +318,7 @@ def visualize_selection(
     
     # 閾値線
     ax.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
-    ax.axvline(x=0.5, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (0.5)')
+    ax.axvline(x=1.0, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
     
     ax.set_xlabel('Log Ratio (迎合特異性)', fontsize=12)
     ax.set_ylabel('Global Mean AtP (因果効果)', fontsize=12)
@@ -361,8 +361,8 @@ def main():
     parser.add_argument(
         '--min_log_ratio',
         type=float,
-        default=0.5,
-        help='最小Log Ratio閾値（デフォルト: 0.5）'
+        default=1.0,
+        help='最小Log Ratio閾値（デフォルト: 1.0 = 2倍の特異性）'
     )
     parser.add_argument(
         '--output_dir',
