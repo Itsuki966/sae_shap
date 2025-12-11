@@ -9,6 +9,10 @@
 - 言語能力への副作用を最小化
 - 因果効果（AtP）が高い順にランキング
 
+**データソース:**
+- `combined_feedback_data.json`: Base時と迎合時の両方の活性値を含むフィードバックデータ
+- 指定したトークン位置（デフォルト: `prompt_last_token`）の活性値を使用
+
 ---
 
 ## 1. 入力データ構造
@@ -34,6 +38,27 @@
           "prompt": "質問全文",
           "response": "中立的な回答",
           "sycophancy_flag": 0,
+          "sae_activations": {
+            "prompt_last_token": {
+              "1234": 1.2,
+              "5678": 0.5,
+              ...
+            },
+            "response_first_token": { ... }
+          }
+        },
+        {
+          "template_type": "I really like",
+          "prompt": "質問全文 + I really like...",
+          "response": "迎合的な回答",
+          "sycophancy_flag": 1,
+          "sae_activations": {
+            "prompt_last_token": {
+              "1234": 2.5,
+              "5678": 0.1,
+              ...
+            }
+          },
           "atp_analysis": {
             "target_token": "Yes",
             "base_token": "There",
@@ -43,25 +68,23 @@
               {
                 "id": "1234",
                 "score": 4.2,         // AtPスコア
-                "activation": 1.2,    // 活性値
+                "activation": 2.5,    // 活性値（参考、sae_activationsと同じ）
                 "gradient": 3.5       // 勾配
               },
               ...
             ]
           }
-        },
-        {
-          "template_type": "I really like",
-          "prompt": "質問全文 + I really like...",
-          "response": "迎合的な回答",
-          "sycophancy_flag": 1,
-          "atp_analysis": { ... }
         }
       ]
     }
   ]
 }
 ```
+
+**重要な構造の変更:**
+- **全バリエーションに`sae_activations`が存在**: Base時も迎合時も活性値データあり
+- **複数のトークン位置**: `prompt_last_token`, `response_first_token`など
+- **AtPスコアは迎合時のみ**: `atp_analysis`は迎合時（`sycophancy_flag: 1`）のみに存在
 
 ---
 
@@ -314,23 +337,41 @@ min           1.000000   0.500000             0.500000              0.010000
 
 ### 基本実行
 ```bash
+# デフォルト設定（prompt_last_token使用）
+python select_intervention_features.py
+
+# カスタム設定
 python select_intervention_features.py \
-  --input atp_calculated_results/atp_results_gemma-2-9b-it.json \
+  --input feedback_results/combined_feedback_data.json \
+  --token_position prompt_last_token \
   --top_k 50
+```
+
+### トークン位置の指定
+```bash
+# プロンプト最終トークン（デフォルト）
+python select_intervention_features.py \
+  --token_position prompt_last_token
+
+# レスポンス最初のトークン
+python select_intervention_features.py \
+  --token_position response_first_token
 ```
 
 ### パラメータ調整
 ```bash
 # より厳格な選定（高特異性、高影響力）
 python select_intervention_features.py \
-  --input atp_calculated_results/atp_results_gemma-2-9b-it.json \
+  --input feedback_results/combined_feedback_data.json \
+  --token_position prompt_last_token \
   --top_k 30 \
   --min_atp 5e-4 \
   --min_log_ratio 2.0
 
 # より緩い選定（候補を多く）
 python select_intervention_features.py \
-  --input atp_calculated_results/atp_results_gemma-2-9b-it.json \
+  --input feedback_results/combined_feedback_data.json \
+  --token_position prompt_last_token \
   --top_k 100 \
   --min_atp 1e-5 \
   --min_log_ratio 0.5
@@ -340,7 +381,8 @@ python select_intervention_features.py \
 
 | 引数 | デフォルト値 | 説明 |
 |------|-------------|------|
-| `--input` | (必須) | AtP結果のJSONファイルパス |
+| `--input` | feedback_results/combined_feedback_data.json | combined_feedback_data.jsonのパス |
+| `--token_position` | prompt_last_token | 使用するトークン位置（prompt_last_token, response_first_tokenなど） |
 | `--top_k` | 50 | 選定する上位特徴量数 |
 | `--min_atp` | 1e-4 | 最小AtPスコア閾値 |
 | `--min_log_ratio` | 1.0 | 最小Log Ratio閾値（1.0 = 2倍の特異性） |
@@ -353,7 +395,10 @@ python select_intervention_features.py \
 ```
 [Step 1] データ読み込み
     ↓
-    - JSONファイルからAtPスコアと活性値を抽出
+    - combined_feedback_data.jsonからデータ読み込み
+    - 指定されたtoken_positionの活性値を抽出
+    - Base時: sae_activationsから活性値取得
+    - 迎合時: sae_activationsから活性値 + atp_analysisからAtPスコア取得
     - 特徴量ごとに集約
     
 [Step 2] Log Ratio計算
@@ -437,7 +482,30 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 
 ---
 
-## 8. 注意事項とベストプラクティス
+## 8. データ要件
+
+### 必須データ
+
+1. **combined_feedback_data.json**:
+   - 全バリエーション（Base時・迎合時）に`sae_activations`が必要
+   - 迎合時には追加で`atp_analysis`が必要
+
+2. **トークン位置**:
+   - `sae_activations`内に指定したトークン位置のデータが必要
+   - 利用可能なトークン位置: `prompt_last_token`, `response_first_token`など
+
+### データの一貫性
+
+- Base時と迎合時で**同じトークン位置**の活性値を使用
+- 特徴量IDは文字列または整数で一貫している必要がある
+
+### 旧データとの互換性
+
+**注意**: このスクリプトは`atp_results.json`（Base時に`sae_activations`がないデータ）とは**互換性がありません**。`combined_feedback_data.json`形式のデータを使用してください。
+
+---
+
+## 9. 注意事項とベストプラクティス
 
 ### 8.1 パラメータ調整のガイドライン
 
