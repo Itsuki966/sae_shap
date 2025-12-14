@@ -2,15 +2,39 @@
 
 ## 概要
 
-`select_intervention_features.py` は、SAE特徴量のAtP（Attribution Patching）スコアと活性値データから、LLMの迎合性（Sycophancy）を抑制するための介入候補特徴量を選定するスクリプトです。
+本リポジトリには、SAE特徴量のAtP（Attribution Patching）スコアと活性値データから、LLMの迎合性（Sycophancy）を抑制するための介入候補特徴量を選定するスクリプトが含まれています。
+
+**2つの選定手法:**
+
+### 1. 統合的選定: `select_intervention_features.py`
+
+全template_typeを統合してAtPスコアを計算し、全体的に強い影響を持つ特徴量を選定します。
 
 **目的:**
 - 迎合時に特異的に働く特徴量を特定
 - 言語能力への副作用を最小化
 - 因果効果（AtP）が高い順にランキング
 
+**適用場面:**
+- 全てのtemplate_typeで共通して機能する特徴量を探す場合
+- 全体的な傾向を把握したい場合
+
+### 2. Template Type別選定: `select_intervention_features_per_template.py` ⭐ NEW
+
+各template_type（"I really like", "I think"など）ごとに独立してAtPスコアを計算し、各typeで上位15個を選定後、それらを統合します。
+
+**目的:**
+- template_typeごとに異なる迎合特徴を捉える
+- 各typeで特異的に働く特徴量を漏らさず選定
+- より包括的な介入候補リストを作成
+
+**適用場面:**
+- template_typeごとで迎合メカニズムが異なる可能性がある場合
+- 介入実験で効果が見られない場合の改善策として
+- より網羅的な特徴量選定が必要な場合
+
 **データソース:**
-- `combined_feedback_data.json`: Base時と迎合時の両方の活性値を含むフィードバックデータ
+- `atp_results_gemma-2-9b-it_YYYYMMDD_HHMMSS.json`: AtP分析済みデータ
 - 指定したトークン位置（デフォルト: `prompt_last_token`）の活性値を使用
 
 ---
@@ -380,9 +404,112 @@ min           1.000000   1.000000             0.500000              0.010000
 
 ---
 
+### 4.4 Template Type別選定の出力ファイル ⭐ NEW
+
+`results/selection_results_per_template/`ディレクトリに以下が保存されます：
+
+#### 1. `merged_intervention_candidates_{timestamp}.csv`
+
+**統合された特徴量IDリスト**（介入実験で使用）
+
+```csv
+feature_index
+1234
+5678
+9012
+...
+```
+
+- 全template_typeの選定結果を統合
+- 重複を除いたユニークなリスト
+- **このファイルを介入実験に使用します**
+
+#### 2. `candidates_{template_type}_{timestamp}.csv`
+
+各template_typeごとの詳細データ（複数ファイル生成）
+
+```csv
+feature_index,template_type,global_mean_atp,conditional_mean_atp,mean_activation_syc,mean_activation_base,log_ratio,...
+1234,I really like,5.234,6.012,1.456,0.123,3.073,...
+5678,I really like,4.891,5.321,2.012,0.089,2.354,...
+...
+```
+
+- template_typeごとに選定された特徴量の詳細
+- 各template_typeでの統計情報を含む
+
+#### 3. `selection_summary_{timestamp}.txt`
+
+選定サマリーと重複分析
+
+```
+============================================================
+Template Type別 介入候補特徴量 選定サマリー
+============================================================
+
+--- 実行パラメータ ---
+入力ファイル: atp_calculated_results/atp_results_gemma-2-9b-it_20251201_095948.json
+トークン位置: prompt_last_token
+各template_typeでの選定数: 15
+最小AtPスコア: 0.0
+最小Log Ratio: 0.0
+
+--- 統合結果 ---
+template_type数: 4
+合計選定数（重複あり）: 60
+ユニークな特徴量数: 45
+
+--- template_typeごとの選定状況 ---
+
+I really like:
+  選定数: 15
+  AtP範囲: 0.005234 ~ 0.001234
+  Log Ratio範囲: 3.07 ~ 1.23
+  上位5特徴量:
+    - Feature 1234: AtP=0.005234, LogRatio=3.07
+    - Feature 5678: AtP=0.004891, LogRatio=2.35
+    ...
+
+I think:
+  選定数: 15
+  ...
+
+--- 統合された特徴量IDリスト（全て） ---
+[1234, 5678, 9012, ...]
+
+--- 重複分析 ---
+重複していない特徴（1つのtemplateのみ）: 30
+2つのtemplateで選ばれた特徴: 10
+3つのtemplateで選ばれた特徴: 3
+4つのtemplateで選ばれた特徴: 2
+
+全template_typeで選ばれた共通特徴（2個）:
+[1234, 5678]
+```
+
+#### 4. `per_template_selection_{timestamp}.png`
+
+template_typeごとの散布図（2×2グリッド）
+
+- 各template_typeでの選定結果を個別に可視化
+- 横軸: Log Ratio、縦軸: Global Mean AtP
+- 各typeで異なる選定パターンを確認可能
+
+#### 5. `overlap_analysis_{timestamp}.png`
+
+重複状況の棒グラフ
+
+- 横軸: 重複度（1つのtemplate、2つのtemplate、...）
+- 縦軸: 特徴量数
+- どれだけの特徴が複数のtemplate_typeで選ばれたかを可視化
+
+---
+
 ## 5. 使用例
 
-### 基本実行
+### 5.1 統合的選定（従来の方法）
+
+#### 基本実行
 ```bash
 # デフォルト設定（prompt_last_token使用）
 python select_intervention_features.py
@@ -394,7 +521,7 @@ python select_intervention_features.py \
   --top_k 50
 ```
 
-### トークン位置の指定
+#### トークン位置の指定
 ```bash
 # プロンプト最終トークン（デフォルト）
 python select_intervention_features.py \
@@ -405,7 +532,43 @@ python select_intervention_features.py \
   --token_position response_first_token
 ```
 
-### パラメータ調整
+### 5.2 Template Type別選定（推奨）⭐ NEW
+
+#### 基本実行
+```bash
+# デフォルト設定（各template_typeでトップ15、合計最大60個）
+python select_intervention_features_per_template.py
+
+# 各template_typeでの選定数を変更
+python select_intervention_features_per_template.py --top_k_per_template 20
+
+# 入力ファイルを指定
+python select_intervention_features_per_template.py \
+  --input atp_calculated_results/atp_results_gemma-2-9b-it_20251201_095948.json
+```
+
+#### フィルタリング条件の調整
+```bash
+# より厳格な選定（高特異性、高影響力）
+python select_intervention_features_per_template.py \
+  --top_k_per_template 15 \
+  --min_atp 1e-5 \
+  --min_log_ratio 0.5
+
+# より緩い選定（候補を多く）
+python select_intervention_features_per_template.py \
+  --top_k_per_template 20 \
+  --min_atp 0.0 \
+  --min_log_ratio 0.0
+```
+
+#### 出力ディレクトリの指定
+```bash
+python select_intervention_features_per_template.py \
+  --output_dir results/selection_results_per_template/experiment_001
+```
+
+#### パラメータ調整（統合的選定）
 ```bash
 # より厳格な選定（高特異性、高影響力）
 python select_intervention_features.py \
@@ -424,7 +587,9 @@ python select_intervention_features.py \
   --min_log_ratio 0.5
 ```
 
-### コマンドライン引数
+### 5.3 コマンドライン引数
+
+#### 統合的選定（select_intervention_features.py）
 
 | 引数 | デフォルト値 | 説明 |
 |------|-------------|------|
@@ -435,9 +600,22 @@ python select_intervention_features.py \
 | `--min_log_ratio` | 1.0 | 最小Log Ratio閾値（1.0 = 2倍の特異性） |
 | `--output_dir` | results/selection_results | 結果の保存先ディレクトリ |
 
+#### Template Type別選定（select_intervention_features_per_template.py）⭐ NEW
+
+| 引数 | デフォルト値 | 説明 |
+|------|-------------|------|
+| `--input` | atp_calculated_results/atp_results_gemma-2-9b-it_20251201_095948.json | atp_results.jsonのパス |
+| `--token_position` | prompt_last_token | 使用するトークン位置 |
+| `--top_k_per_template` | 15 | 各template_typeで選定する特徴量数 |
+| `--min_atp` | 0.0 | 最小AtPスコア閾値（0.0 = 正の値のみ） |
+| `--min_log_ratio` | 0.0 | 最小Log Ratio閾値 |
+| `--output_dir` | results/selection_results_per_template | 結果の保存先ディレクトリ |
+
 ---
 
 ## 6. 処理フロー
+
+### 6.1 統合的選定（select_intervention_features.py）
 
 ```
 [Step 1] データ読み込み
@@ -471,6 +649,44 @@ python select_intervention_features.py \
 [Step 6] 可視化
     ↓
     - PNG: 散布図（Log Ratio vs AtP）
+```
+
+### 6.2 Template Type別選定（select_intervention_features_per_template.py）⭐ NEW
+
+```
+[Step 1] データ読み込みとtemplate_type別集計
+    ↓
+    - atp_results.jsonからデータ読み込み
+    - 迎合誘発template_typeを検出（base以外）
+    - 各template_typeごとに独立して以下を実行:
+      ・そのtypeの迎合サンプル数とbaseサンプル数をカウント
+      ・そのtypeでのAtPスコアと活性値を集計
+      ・Global Mean AtPとLog Ratioを計算
+    
+[Step 2] 各template_typeでトップK選定
+    ↓
+    - 各template_typeごとに:
+      ・条件1: global_mean_atp > min_atp（デフォルト: 0）
+      ・条件2: log_ratio > min_log_ratio（デフォルト: 0）
+      ・AtPスコア降順でソート
+      ・上位K個（デフォルト: 15）を選定
+    
+[Step 3] リストの統合
+    ↓
+    - 全template_typeの選定結果を統合
+    - 重複を除いてユニークなリストを作成
+    - 重複状況を分析（何個のtemplateで選ばれたか）
+    
+[Step 4] 結果保存
+    ↓
+    - CSV: 統合リスト（merged_intervention_candidates）
+    - CSV: 各template_typeの詳細データ
+    - TXT: 選定サマリーと重複分析
+    
+[Step 5] 可視化
+    ↓
+    - PNG: template_type別散布図（2×2グリッド）
+    - PNG: 重複状況の棒グラフ
 ```
 
 ---
@@ -556,6 +772,8 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 
 ### 8.1 パラメータ調整のガイドライン
 
+#### 統合的選定の場合
+
 **`min_log_ratio` の設定:**
 - **0.5**: 緩い（約1.4倍の特異性）→ 候補が多い、副作用リスク中
 - **1.0**: 推奨（2倍の特異性）→ バランス良好
@@ -567,13 +785,50 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 - **中（50-100）**: バランス → 標準的介入
 - **大（100-200）**: 広範囲介入 → 効果は大きいが副作用リスク増
 
+#### Template Type別選定の場合 ⭐ NEW
+
+**`top_k_per_template` の設定:**
+- **小（10-15）**: 各typeで最も効果的な特徴のみ → 保守的（合計40-60個程度）
+- **中（15-20）**: バランス良好 → 標準的（合計60-80個程度）
+- **大（20-30）**: 各typeで広範囲選定 → 包括的（合計80-120個程度）
+
+**注意**: 最終的な統合リストの特徴量数は、重複度により変動します。重複が多い場合は統合後の数が少なくなります。
+
+**`min_log_ratio` と `min_atp` の設定:**
+- **デフォルト（0.0）**: 正の値のみを選定 → 各typeの特徴を広く捉える
+- **厳格（0.5, 1e-5）**: 高特異性・高影響力のみ → 安全性重視
+
 ---
 
-### 8.2 結果の検証方法
+### 8.2 手法の選択ガイド
 
+#### 統合的選定を使うべき場合:
+- 初回の探索的分析
+- 全template_typeで共通して機能する汎用的な特徴を探す場合
+- シンプルな解釈を優先する場合
+
+#### Template Type別選定を使うべき場合（推奨）⭐:
+- **介入実験で効果が見られない場合**
+- template_typeごとで異なる迎合メカニズムが疑われる場合
+- より包括的で確実な特徴量選定が必要な場合
+- 各template_typeの特性を詳しく分析したい場合
+
+---
+
+### 8.3 結果の検証方法
+
+#### 統合的選定の場合:
 1. **散布図の確認**: 選定された特徴が右上に集中しているか
 2. **Log Ratioの分布**: 十分に高い特異性（>1.0）を持つか
 3. **Base活性値の確認**: 通常時の活性値が低いか（副作用リスク評価）
+
+#### Template Type別選定の場合 ⭐ NEW:
+1. **template_type別散布図の確認**: 各typeで選定パターンが異なるか
+2. **重複分析の確認**: 
+   - 全typeで選ばれた共通特徴 → 汎用的な迎合特徴
+   - 1つのtypeのみで選ばれた特徴 → type特異的な迎合特徴
+3. **統合リストのサイズ確認**: 期待通りの特徴量数が得られているか
+4. **各typeの統計情報**: AtP範囲とLog Ratio範囲が妥当か
 
 ---
 
@@ -581,15 +836,30 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 
 選定された特徴量を用いて、実際に介入実験を行います。
 
+**推奨ワークフロー**:
+
+1. **初回実験**: 統合的選定で全体傾向を把握
+   ```bash
+   python select_intervention_features.py --top_k 50
+   # → 介入実験
+   ```
+
+2. **改善実験**: Template Type別選定で包括的に対応 ⭐
+   ```bash
+   python select_intervention_features_per_template.py --top_k_per_template 15
+   # → merged_intervention_candidates_*.csv を使用して介入実験
+   ```
+
 **手法**: Geometric Subtraction (Zero-Ablation)
 ```python
 x' = x - (Activation(f_i) × d_i)
 ```
 - 特定特徴量の方向ベクトルを残差ストリームから削除
+- **Template Type別選定の統合リストをそのまま使用**（全template_typeで同じ特徴を介入）
 
 **評価指標:**
-1. **Sycophancy Reduction**: 迎合挙動の減少
-2. **Perplexity**: 言語能力の保持（副作用評価）
+1. **Sycophancy Rate**: 迎合挙動の減少（McNemar検定で有意性を確認）
+2. **Naturalness Score**: 言語能力の保持（副作用評価）
 
 ---
 
