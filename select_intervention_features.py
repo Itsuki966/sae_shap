@@ -356,7 +356,8 @@ def save_results(df: pd.DataFrame, df_all: pd.DataFrame, output_dir: Path, top_k
 def visualize_selection(
     df_all: pd.DataFrame,
     df_selected: pd.DataFrame,
-    output_dir: Path
+    output_dir: Path,
+    args=None
 ):
     """
     選定された特徴量を散布図で可視化
@@ -399,7 +400,7 @@ def visualize_selection(
     
     # 閾値線
     ax.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
-    ax.axvline(x=1.0, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
+    ax.axvline(x=args.min_log_ratio, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
     
     ax.set_xlabel('Log Ratio (迎合特異性)', fontsize=12)
     ax.set_ylabel('Global Mean AtP (因果効果)', fontsize=12)
@@ -442,7 +443,7 @@ def visualize_selection(
     
     # 閾値線
     ax2.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
-    ax2.axvline(x=1.0, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
+    ax2.axvline(x=args.min_log_ratio, color='blue', linestyle='--', linewidth=0.8, alpha=0.5, label='Log Ratio Threshold (1.0 = 2x)')
     
     # 軸の範囲を制限
     ax2.set_xlim(-5, 5)
@@ -548,7 +549,7 @@ def main():
     # Step 6: 可視化
     print("\n[Step 6] 可視化...")
     selected_df = candidates[candidates['feature_index'].isin(top_k_ids)]
-    visualize_selection(df, selected_df, output_dir)
+    visualize_selection(df, selected_df, output_dir, args)
     
     print("\n" + "=" * 60)
     print("処理完了！")
