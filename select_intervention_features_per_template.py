@@ -154,6 +154,8 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
         results = []
         all_feature_ids = set(feature_atp_sum.keys()) | set(feature_activation_sum_syc.keys()) | set(feature_activation_sum_base.keys())
         
+        epsilon = 1e-6  # ゼロ除算回避用
+        
         for feature_id in all_feature_ids:
             # Global Mean AtP
             total_score = feature_atp_sum[feature_id]
@@ -168,8 +170,14 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
             mean_activation_base = feature_activation_sum_base[feature_id] / total_base_samples
             
             # Log Ratio計算（epsilon=1e-6）
-            epsilon = 1e-6
             log_ratio = np.log2((mean_activation_syc + epsilon) / (mean_activation_base + epsilon))
+            
+            # 頻度計算（活性化率）
+            freq_syc = (feature_activation_count_syc[feature_id] / total_sycophancy_samples) * 100
+            freq_nonsyc = (feature_activation_count_base[feature_id] / total_base_samples) * 100
+            
+            # Specificity計算
+            specificity = freq_syc / (freq_syc + freq_nonsyc + epsilon)
             
             results.append({
                 'feature_index': int(feature_id),
@@ -179,6 +187,9 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
                 'mean_activation_syc': mean_activation_syc,
                 'mean_activation_base': mean_activation_base,
                 'log_ratio': log_ratio,
+                'freq_syc': freq_syc,
+                'freq_nonsyc': freq_nonsyc,
+                'specificity': specificity,
                 'num_samples_active_syc': feature_activation_count_syc[feature_id],
                 'num_samples_active_base': feature_activation_count_base[feature_id],
                 'num_samples_total_syc': total_sycophancy_samples,
@@ -306,9 +317,15 @@ def save_results(
         df = results_per_template[template_type]
         selected_df = df[df['feature_index'].isin(feature_ids)].copy()
         
+        # 選定された特徴量のみ
         template_csv_path = output_dir / f"candidates_{template_type}_{timestamp}.csv"
         selected_df.to_csv(template_csv_path, index=False, encoding='utf-8')
         print(f"✓ {template_type}の詳細データを保存: {template_csv_path}")
+        
+        # 全特徴量データも保存
+        all_features_path = output_dir / f"all_features_{template_type}_{timestamp}.csv"
+        df.to_csv(all_features_path, index=False, encoding='utf-8')
+        print(f"✓ {template_type}の全特徴量データを保存: {all_features_path}")
     
     # 3. サマリーテキストを保存
     summary_path = output_dir / f"selection_summary_{timestamp}.txt"
