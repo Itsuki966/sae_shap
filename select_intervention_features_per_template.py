@@ -574,8 +574,8 @@ def main():
     parser.add_argument(
         '--sample_per_dataset',
         type=int,
-        default=200,
-        help='各dataset(arguments/math)から取得する問題数（デフォルト: 200、0で全問使用）'
+        default=250,
+        help='各dataset(arguments/math)から取得する問題数（デフォルト: 250、0で全問使用）'
     )
     
     args = parser.parse_args()
