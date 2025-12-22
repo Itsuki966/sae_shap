@@ -32,7 +32,7 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 10
 
 
-def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last_token', sample_per_dataset: int = 200) -> Dict[str, pd.DataFrame]:
+def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last_token', sample_per_dataset: int = 250) -> Dict[str, pd.DataFrame]:
     """
     combined_feedback_data.jsonを読み込み、template_typeごとにDataFrameに変換する
     
