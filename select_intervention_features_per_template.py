@@ -32,7 +32,7 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 10
 
 
-def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last_token') -> Dict[str, pd.DataFrame]:
+def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last_token', sample_per_dataset: int = 200) -> Dict[str, pd.DataFrame]:
     """
     combined_feedback_data.jsonを読み込み、template_typeごとにDataFrameに変換する
     
@@ -44,12 +44,39 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
     Args:
         filepath: combined_feedback_data.jsonのパス
         token_position: 使用するトークン位置（デフォルト: 'prompt_last_token'）
+        sample_per_dataset: 各datasetから取得する問題数（デフォルト: 200）
     
     Returns:
         Dict[str, pd.DataFrame]: template_typeをキーとしたDataFrameの辞書
     """
     with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
+    
+    # データセットごとにフィルタリング
+    if sample_per_dataset is not None and sample_per_dataset > 0:
+        # データセットごとにグループ化
+        dataset_groups = defaultdict(list)
+        for result in data['results']:
+            dataset = result.get('dataset', 'unknown')
+            dataset_groups[dataset].append(result)
+        
+        print(f"元のデータセット分布:")
+        for dataset, results in dataset_groups.items():
+            print(f"  {dataset}: {len(results)}問")
+        
+        # 各データセットから指定数をサンプリング
+        sampled_results = []
+        for dataset, results in dataset_groups.items():
+            if dataset in ['arguments', 'math']:
+                n_samples = min(sample_per_dataset, len(results))
+                sampled = results[:n_samples]  # 最初のn_samples個を取得
+                sampled_results.extend(sampled)
+                print(f"  {dataset}から{n_samples}問をサンプリング")
+        
+        data['results'] = sampled_results
+        print(f"\nサンプリング後の合計: {len(sampled_results)}問\n")
+    else:
+        print(f"サンプリングなし: 全{len(data['results'])}問を使用\n")
     
     # まず、迎合を誘発するtemplate_typeを特定する（base以外）
     all_template_types = set()
@@ -341,7 +368,8 @@ def save_results(
             f.write(f"トークン位置: {args.token_position}\n")
             f.write(f"各template_typeでの選定数: {args.top_k_per_template}\n")
             f.write(f"最小AtPスコア: {args.min_atp}\n")
-            f.write(f"最小Log Ratio: {args.min_log_ratio}\n\n")
+            f.write(f"最小Log Ratio: {args.min_log_ratio}\n")
+            f.write(f"各datasetからのサンプル数: {args.sample_per_dataset if args.sample_per_dataset > 0 else '全問'}\n\n")
         
         # 統合結果
         f.write("--- 統合結果 ---\n")
@@ -543,6 +571,12 @@ def main():
         default='results/selection_results_per_template',
         help='結果の保存先ディレクトリ'
     )
+    parser.add_argument(
+        '--sample_per_dataset',
+        type=int,
+        default=200,
+        help='各dataset(arguments/math)から取得する問題数（デフォルト: 200、0で全問使用）'
+    )
     
     args = parser.parse_args()
     
@@ -554,11 +588,16 @@ def main():
     print(f"各template_typeでの選定数: {args.top_k_per_template}")
     print(f"最小AtPスコア: {args.min_atp}")
     print(f"最小Log Ratio: {args.min_log_ratio}")
+    print(f"各datasetからのサンプル数: {args.sample_per_dataset if args.sample_per_dataset > 0 else '全問'}")
     print("=" * 60)
     
     # Step 1: データ読み込み（template_typeごとに分割）
     print("\n[Step 1] データ読み込みとtemplate_type別集計...")
-    results_per_template = load_atp_data_per_template(args.input, token_position=args.token_position)
+    results_per_template = load_atp_data_per_template(
+        args.input, 
+        token_position=args.token_position,
+        sample_per_dataset=args.sample_per_dataset
+    )
     
     if len(results_per_template) == 0:
         print("エラー: 処理可能なtemplate_typeが見つかりませんでした")
