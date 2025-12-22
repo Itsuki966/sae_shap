@@ -37,6 +37,12 @@
 - `atp_results_gemma-2-9b-it_YYYYMMDD_HHMMSS.json`: AtP分析済みデータ
 - 指定したトークン位置（デフォルト: `prompt_last_token`）の活性値を使用
 
+**データセットサンプリング機能 🆕:**
+- `arguments`データセットから250問（デフォルト）
+- `math`データセットから250問（デフォルト）
+- 合計500問を用いて分析を実施
+- `--sample_per_dataset`オプションでサンプル数をカスタマイズ可能（0で全問使用）
+
 ---
 
 ## 1. 入力データ構造
@@ -453,6 +459,7 @@ Template Type別 介入候補特徴量 選定サマリー
 各template_typeでの選定数: 15
 最小AtPスコア: 0.0
 最小Log Ratio: 0.0
+各datasetからのサンプル数: 250 🆕
 
 --- 統合結果 ---
 template_type数: 4
@@ -537,6 +544,7 @@ python select_intervention_features.py \
 #### 基本実行
 ```bash
 # デフォルト設定（各template_typeでトップ15、合計最大60個）
+# デフォルトで各datasetから250問ずつサンプリング（合計500問）
 python select_intervention_features_per_template.py
 
 # 各template_typeでの選定数を変更
@@ -545,6 +553,21 @@ python select_intervention_features_per_template.py --top_k_per_template 20
 # 入力ファイルを指定
 python select_intervention_features_per_template.py \
   --input atp_calculated_results/atp_results_gemma-2-9b-it_20251201_095948.json
+```
+
+#### データセットサンプリングのカスタマイズ 🆕
+```bash
+# デフォルト（各datasetから250問ずつ、合計500問）
+python select_intervention_features_per_template.py
+
+# 各datasetから100問ずつサンプリング（合計200問）
+python select_intervention_features_per_template.py --sample_per_dataset 100
+
+# 各datasetから500問ずつサンプリング（合計1000問）
+python select_intervention_features_per_template.py --sample_per_dataset 500
+
+# 全問使用（サンプリングなし）
+python select_intervention_features_per_template.py --sample_per_dataset 0
 ```
 
 #### フィルタリング条件の調整
@@ -609,6 +632,7 @@ python select_intervention_features.py \
 | `--top_k_per_template` | 15 | 各template_typeで選定する特徴量数 |
 | `--min_atp` | 0.0 | 最小AtPスコア閾値（0.0 = 正の値のみ） |
 | `--min_log_ratio` | 0.0 | 最小Log Ratio閾値 |
+| `--sample_per_dataset` 🆕 | 250 | 各dataset(arguments/math)から取得する問題数（0で全問使用） |
 | `--output_dir` | results/selection_results_per_template | 結果の保存先ディレクトリ |
 
 ---
@@ -657,6 +681,10 @@ python select_intervention_features.py \
 [Step 1] データ読み込みとtemplate_type別集計
     ↓
     - atp_results.jsonからデータ読み込み
+    - **データセットサンプリング（デフォルト: 各250問）🆕**
+      ・argumentsデータセットから250問をサンプリング
+      ・mathデータセットから250問をサンプリング
+      ・合計500問を使用して分析
     - 迎合誘発template_typeを検出（base以外）
     - 各template_typeごとに独立して以下を実行:
       ・そのtypeの迎合サンプル数とbaseサンプル数をカウント
@@ -846,7 +874,14 @@ Logit Difference = Logit(Target Token) - Logit(Base Token)
 
 2. **改善実験**: Template Type別選定で包括的に対応 ⭐
    ```bash
+   # デフォルト設定（各datasetから250問ずつ、合計500問を使用）
    python select_intervention_features_per_template.py --top_k_per_template 15
+   
+   # サンプル数をカスタマイズ 🆕
+   python select_intervention_features_per_template.py \
+     --top_k_per_template 15 \
+     --sample_per_dataset 300  # 各datasetから300問ずつ（合計600問）
+   
    # → merged_intervention_candidates_*.csv を使用して介入実験
    ```
 
