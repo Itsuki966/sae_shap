@@ -44,7 +44,7 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
     Args:
         filepath: combined_feedback_data.jsonのパス
         token_position: 使用するトークン位置（デフォルト: 'prompt_last_token'）
-        sample_per_dataset: 各datasetから取得する問題数（デフォルト: 200）
+        sample_per_dataset: 各datasetから取得する問題数（デフォルト: 250）
     
     Returns:
         Dict[str, pd.DataFrame]: template_typeをキーとしたDataFrameの辞書
