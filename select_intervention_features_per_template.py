@@ -186,7 +186,7 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
         for feature_id in all_feature_ids:
             # Global Mean AtP
             total_score = feature_atp_sum[feature_id]
-            global_mean_atp = total_score / total_sycophancy_samples
+            global_mean_S = total_score / total_sycophancy_samples
             
             # 参考値: 活性化した時のみの平均AtP
             count_active = feature_activation_count_syc[feature_id]
@@ -209,7 +209,7 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
             results.append({
                 'feature_index': int(feature_id),
                 'template_type': template_type,
-                'global_mean_atp': global_mean_atp,
+                'global_mean_S': global_mean_S,
                 'conditional_mean_atp': conditional_mean_atp,
                 'mean_activation_syc': mean_activation_syc,
                 'mean_activation_base': mean_activation_base,
@@ -226,11 +226,11 @@ def load_atp_data_per_template(filepath: str, token_position: str = 'prompt_last
             })
         
         df = pd.DataFrame(results)
-        df = df.sort_values('global_mean_atp', ascending=False).reset_index(drop=True)
+        df = df.sort_values('global_mean_S', ascending=False).reset_index(drop=True)
         results_per_template[template_type] = df
         
         print(f"  特徴量数: {len(df)}")
-        print(f"  正のAtPを持つ特徴量: {(df['global_mean_atp'] > 0).sum()}")
+        print(f"  正のAtPを持つ特徴量: {(df['global_mean_S'] > 0).sum()}")
     
     return results_per_template
 
@@ -245,9 +245,9 @@ def select_top_k_per_template(
     各template_typeごとにトップK個の特徴量を選定
     
     選定条件:
-        1. global_mean_atp > min_atp_impact（デフォルト: 0、つまり正の値のみ）
+        1. global_mean_S > min_atp_impact（デフォルト: 0、つまり正の値のみ）
         2. log_ratio > min_log_ratio（デフォルト: 0）
-        3. 上記条件を満たす中から、global_mean_atpが高い順にK個選定
+        3. 上記条件を満たす中から、global_mean_Sが高い順にK個選定
     
     Args:
         results_per_template: template_typeごとのDataFrame辞書
@@ -261,17 +261,17 @@ def select_top_k_per_template(
     top_k_per_template = {}
     
     print(f"\n各template_typeでトップ{k}を選定...")
-    print(f"  条件: global_mean_atp > {min_atp_impact}, log_ratio > {min_log_ratio}")
+    print(f"  条件: global_mean_S > {min_atp_impact}, log_ratio > {min_log_ratio}")
     print("-" * 60)
     
     for template_type, df in results_per_template.items():
         # フィルタリング
         filtered = df[
-            (df['global_mean_atp'] > min_atp_impact) &
+            (df['global_mean_S'] > min_atp_impact) &
             (df['log_ratio'] > min_log_ratio)
         ].copy()
         
-        # すでにglobal_mean_atp降順でソート済み
+        # すでにglobal_mean_S降順でソート済み
         top_k = filtered.head(k)
         feature_ids = top_k['feature_index'].tolist()
         
@@ -281,7 +281,7 @@ def select_top_k_per_template(
         print(f"  フィルタ通過: {len(filtered)} 特徴量")
         print(f"  選定数: {len(feature_ids)} 特徴量")
         if len(feature_ids) > 0:
-            print(f"  AtP範囲: {top_k['global_mean_atp'].max():.6f} ~ {top_k['global_mean_atp'].min():.6f}")
+            print(f"  AtP範囲: {top_k['global_mean_S'].max():.6f} ~ {top_k['global_mean_S'].min():.6f}")
         print()
     
     return top_k_per_template
@@ -386,11 +386,11 @@ def save_results(
             f.write(f"\n{template_type}:\n")
             f.write(f"  選定数: {len(feature_ids)}\n")
             if len(selected_df) > 0:
-                f.write(f"  AtP範囲: {selected_df['global_mean_atp'].max():.6f} ~ {selected_df['global_mean_atp'].min():.6f}\n")
+                f.write(f"  AtP範囲: {selected_df['global_mean_S'].max():.6f} ~ {selected_df['global_mean_S'].min():.6f}\n")
                 f.write(f"  Log Ratio範囲: {selected_df['log_ratio'].max():.2f} ~ {selected_df['log_ratio'].min():.2f}\n")
                 f.write(f"  上位5特徴量:\n")
                 for _, row in selected_df.head(5).iterrows():
-                    f.write(f"    - Feature {int(row['feature_index'])}: AtP={row['global_mean_atp']:.6f}, LogRatio={row['log_ratio']:.2f}\n")
+                    f.write(f"    - Feature {int(row['feature_index'])}: AtP={row['global_mean_S']:.6f}, LogRatio={row['log_ratio']:.2f}\n")
         
         # 統合リスト（全て記載）
         f.write("\n" + "=" * 60 + "\n")
@@ -439,14 +439,23 @@ def visualize_results(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # template_typeごとの散布図
+    # プロット順序を指定: 左上、右上、左下、右下
+    template_order = ["I really like", "I really dislike", "I wrote", "I did not write"]
+    
     n_templates = len(results_per_template)
     fig, axes = plt.subplots(2, 2, figsize=(16, 14))
     axes = axes.flatten()
     
-    for idx, (template_type, df) in enumerate(results_per_template.items()):
+    for idx, template_type in enumerate(template_order):
         if idx >= len(axes):
             break
         
+        # template_typeが存在しない場合はスキップ
+        if template_type not in results_per_template:
+            axes[idx].axis('off')
+            continue
+        
+        df = results_per_template[template_type]
         ax = axes[idx]
         feature_ids = top_k_per_template[template_type]
         selected_df = df[df['feature_index'].isin(feature_ids)]
@@ -454,7 +463,7 @@ def visualize_results(
         # 全特徴量
         ax.scatter(
             df['log_ratio'],
-            df['global_mean_atp'],
+            df['global_mean_S'],
             c='gray',
             alpha=0.3,
             s=20,
@@ -464,7 +473,7 @@ def visualize_results(
         # 選定された特徴量
         ax.scatter(
             selected_df['log_ratio'],
-            selected_df['global_mean_atp'],
+            selected_df['global_mean_S'],
             c='red',
             alpha=0.8,
             s=50,
@@ -477,7 +486,7 @@ def visualize_results(
         ax.axvline(x=0, color='blue', linestyle='--', linewidth=0.8, alpha=0.5)
         
         ax.set_xlabel('Log Ratio (迎合特異性)', fontsize=11)
-        ax.set_ylabel('Global Mean AtP (因果効果)', fontsize=11)
+        ax.set_ylabel('Global Mean S (因果効果)', fontsize=11)
         ax.set_title(f'{template_type}', fontsize=12, fontweight='bold')
         ax.legend(loc='upper right', fontsize=9)
         ax.grid(True, alpha=0.3)
