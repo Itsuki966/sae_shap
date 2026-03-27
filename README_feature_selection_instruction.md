@@ -2,7 +2,7 @@
 
 ## 概要
 
-本リポジトリには、SAE特徴量のAtP（Attribution Patching）スコアと活性値データから、LLMの迎合性（Sycophancy）を抑制するための介入候補特徴量を選定するスクリプトが含まれています。
+本リポジトリには、SAE特徴量のAtP（Attribution Patching）スコアと活性値データから、LLMの迎合性（Sycophancy）を抑制するための**介入候補特徴量を選定するスクリプト**が含まれています。
 
 **2つの選定手法:**
 
